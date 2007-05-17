@@ -10,9 +10,10 @@
 " Name Of File: lusty-explorer.vim
 "  Description: Dynamic Filesystem and Buffer Explorer Vim Plugin
 "   Maintainer: Stephen Bach <sjbach@users.sourceforge.net>
+" Contributors: Raimon Grau
 "
-" Release Date: Saturday, May 15, 2007
-"      Version: 1.1.0
+" Release Date: Thursday, May 17, 2007
+"      Version: 1.1.1
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -531,7 +532,7 @@ class FilesystemExplorer < LustyExplorer
 
       @input += s
 
-      if @input[-1,1] == File::SEPARATOR and File.directory?(@input)
+      if @input[-1,1] == File::SEPARATOR
         # Convert the named directory to a case-sensitive version.
 
         input_base = File.basename(@input)
