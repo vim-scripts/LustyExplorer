@@ -12,8 +12,8 @@
 "   Maintainer: Stephen Bach <sjbach@users.sourceforge.net>
 " Contributors: Raimon Grau
 "
-" Release Date: Thursday, May 17, 2007
-"      Version: 1.1.1
+" Release Date: Wednesday, May 30, 2007
+"      Version: 1.1.2
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -75,7 +75,7 @@
 " If your version of Vim does not have "+ruby" but you would still like to
 " use this plugin, you can fix it.  Here are a few tips:
 "
-" On Debian/Ubuntu:
+" On Debian Or Ubuntu:
 "     # apt-get install vim-ruby
 "
 " On Gentoo:
@@ -88,7 +88,6 @@
 "     # make && make install
 "
 " TODO:
-" - expand ~ to $HOME
 " - if new_hash == previous_hash, don't bother 'repainting'.
 " - add globbing?
 "   - also add a lock key which will make the stuff that currently appears
@@ -167,27 +166,24 @@ def has_syntax
   eva('has("syntax")') != "0"
 end
 
+
 class LustyExplorer
   private
-    @@COLUMN_SEPARATOR = "    "
     @@NO_ENTRIES_STRING = "-- NO ENTRIES --" 
-    @@PROMPT = "> "
 
   public
     def initialize
       @settings = SavedSettings.new
-      @displayer = Displayer.new(title(), \
-                                 @@COLUMN_SEPARATOR, \
-                                 @@NO_ENTRIES_STRING)
-      @input = ""
+      @displayer = Displayer.new(title(), @@NO_ENTRIES_STRING)
+      @prompt = nil
       @running = false
     end
 
     def run
       return if @running
 
-      @input = ""
-      @settings.save()
+      @prompt.clear
+      @settings.save
       @running = true
       @calling_window = $curwin
       create_explorer_window()
@@ -200,9 +196,9 @@ class LustyExplorer
       case i
         when 32..126          # Printable characters
           c = i.chr
-          add_chars(c)
+          @prompt.add c
         when 8                # Backspace
-          del_char()
+          @prompt.backspace
         when 9                # Tab
           tab_complete()
         when 13               # Enter
@@ -221,8 +217,8 @@ class LustyExplorer
     def refresh
       sync_pwd()
       on_refresh()
-      @displayer.print(ordered_entries())
-      VIM.message @@PROMPT + @input
+      @displayer.print ordered_entries()
+      @prompt.refresh
     end
 
     def sync_pwd
@@ -230,13 +226,13 @@ class LustyExplorer
       ruby_pwd = Dir.pwd
 
       if ruby_pwd != vim_pwd
-        Dir.chdir(vim_pwd)
+        Dir.chdir vim_pwd
       end
     end
 
     def create_explorer_window
 
-      @displayer.create()
+      @displayer.create
 
       # Non-special printable characters.
       printables =  '/!"#$%&\'()*+,-.0123456789:<=>?#@"
@@ -286,28 +282,24 @@ class LustyExplorer
     def on_refresh
       # Blank
       exe "syn clear LustyExpMatch"
-      if !input_match_string.nil?
-        exe "syn match LustyExpMatch \"#{input_match_string}\""
+      if !@prompt.vim_match_string.nil?
+        exe "syn match LustyExpMatch \"#{@prompt.vim_match_string}\""
       end
     end
 
     def matching_entries
       entries = all_entries()
-      input_regex = pruning_regex()
+      regex = @prompt.pruning_regex
 
       # Only return entries whose names match our input.
       pruned = Array.new
       entries.each do |x|
-        if x =~ input_regex
+        if x =~ regex
           pruned << x
         end
       end
 
       return pruned
-    end
-
-    def del_char
-      @input.chop!
     end
 
     def choose
@@ -329,9 +321,9 @@ class LustyExplorer
     end
 
     def cleanup
-      @displayer.close()
-      Window.select(@calling_window)
-      @settings.restore()
+      @displayer.close
+      Window.select @calling_window
+      @settings.restore
       @running = false
       VIM.message ""
     end
@@ -342,6 +334,7 @@ class BufferExplorer < LustyExplorer
   public
     def initialize
       super
+      @prompt = Prompt.new
     end
 
     def run
@@ -360,35 +353,11 @@ class BufferExplorer < LustyExplorer
       '[LustyExplorer-Buffers]'
     end
 
-    def add_chars(s)
-      @input += s
-    end
-
-    def case_insensitive?
-      @input == @input.downcase
-    end
-
-    def input_match_string
-      if @input.empty?
-        return nil
-      else
-        str = "\\(^\\|#{@@COLUMN_SEPARATOR}\\)\\zs" + \
-              Regexp.escape(@input).sub('\(','(').sub('\)',')') + \
-              "\\ze\\(\\s*$\\|#{@@COLUMN_SEPARATOR}\\)"
-        str += '\c' if case_insensitive?
-
-        return str
-      end
-    end
-
     def buffer_match_string
-      pwd = Pathname.getwd()
+      pwd = Pathname.getwd
       relative_path = @current_buffer_path.relative_path_from(pwd).to_s
-      str = "\\(^\\|#{@@COLUMN_SEPARATOR}\\)\\zs" + \
-            Regexp.escape(relative_path) + \
-            "\\ze\\(\\s*$\\|#{@@COLUMN_SEPARATOR}\\)"
-      str += '\c' if case_insensitive?
-      return str
+
+      Displayer.vim_match_string(relative_path, @prompt.insensitive?)
     end
 
     def on_refresh
@@ -399,19 +368,19 @@ class BufferExplorer < LustyExplorer
     end
 
     def all_entries
-      pwd = Pathname.getwd()
+      pwd = Pathname.getwd
 
       # Generate a hash of the buffers.
       @buffers = Hash.new
       (0..VIM::Buffer.count-1).each do |i|
 
-        path = Pathname.new(VIM::Buffer[i].name)
-        relative = path.relative_path_from(pwd).to_s()
+        path = Pathname.new VIM::Buffer[i].name
+        relative = path.relative_path_from(pwd).to_s
 
-        @buffers[relative] = VIM::Buffer[i].number()
+        @buffers[relative] = VIM::Buffer[i].number
       end
 
-      return @buffers.keys()
+      return @buffers.keys
     end
 
     def ordered_entries
@@ -440,26 +409,26 @@ class BufferExplorer < LustyExplorer
 
       paths = matching_entries()
 
-      return if paths.length <= 0 or @input.length <= 0
+      return if paths.length <= 0 or @prompt.get.length <= 0
 
-      string = @input
+      string = @prompt.get
       done = false
       while !done do
-        start_pos = case_insensitive? ? paths[0].downcase().index(string) \
-                                      : paths[0].index(string)
+        first = paths[0]
+        start_pos = @prompt.insensitive? ? first.downcase.index(string) \
+                                         : first.index(string)
 
-        if start_pos.nil? or start_pos + string.length >= paths[0].length
+        if start_pos.nil? or (start_pos + string.length >= first.length)
           break
         end
 
-        c = paths[0][start_pos + string.length,1]
-        c.downcase! if case_insensitive?
+        c = first[start_pos + string.length,1]
+        c.downcase! if @prompt.insensitive?
 
         string += c
 
         paths.each do |path|
-          cased_path = case_insensitive? ? path.downcase \
-                                         : path
+          cased_path = @prompt.insensitive? ? path.downcase : path
 
           if cased_path.index(string).nil?
             string.chop!
@@ -469,19 +438,14 @@ class BufferExplorer < LustyExplorer
         end
       end
 
-      @input = string
-    end
-
-
-    def pruning_regex
-      Regexp.new(Regexp.escape(@input), case_insensitive?)
+      @prompt.set(string)
     end
 
     def find_match(entries)
-      if case_insensitive?
-        return entries.detect { |x| @input == x.downcase }
+      if @prompt.insensitive?
+        entries.detect { |x| @prompt.get == x.downcase }
       else
-        return entries.detect { |x| @input == x }
+        entries.detect { |x| @prompt.get == x }
       end
     end
 
@@ -499,6 +463,7 @@ class FilesystemExplorer < LustyExplorer
   public
     def initialize
       super
+      @prompt = FilesystemPrompt.new
     end
 
     def key_pressed()
@@ -507,11 +472,12 @@ class FilesystemExplorer < LustyExplorer
       if (i == 10)    # Shift + Enter
         # Open all non-directories currently in view.
         matching_entries().each do |e|
-          if just_entered_dir?
-            path = @input + e
-          else
-            path = File.dirname(@input) + File::SEPARATOR + e
-          end
+          path = \
+            if @prompt.at_dir?
+              @prompt.get + e
+            else
+              @prompt.dirname + File::SEPARATOR + e
+            end
 
           load_file(path) unless File.directory?(path)
         end
@@ -526,77 +492,16 @@ class FilesystemExplorer < LustyExplorer
     '[LustyExplorer-Files]'
     end
 
-    def add_chars(s)
-      # Assumption: add_chars() will only receive enough chars at a time to
-      # complete a single directory level, e.g. foo/, not foo/bar/
-
-      @input += s
-
-      if @input[-1,1] == File::SEPARATOR
-        # Convert the named directory to a case-sensitive version.
-
-        input_base = File.basename(@input)
-        input_dir = Pathname.new(File.dirname(@input))
-
-        # First check to make sure we haven't already case-correctly matched
-        # a directory.
-        if input_dir.entries.find { |p| p.basename.to_s == input_base }
-          return
-        end
-
-        case_correct = input_dir.entries.find { |p|
-          p.basename.to_s.downcase == input_base
-        }.to_s
-
-        if (!case_correct.empty?)
-          @input.sub!(/#{input_base}#{File::SEPARATOR}$/, \
-                      case_correct + File::SEPARATOR)
-        end
-      end
-    end
-
-    def case_insensitive?
-      if just_entered_dir?
-        true
-      else
-        File.basename(@input) == File.basename(@input).downcase
-      end
-    end
-
-    def just_entered_dir?
-      # We have not typed anything yet or have just typed the final '/' on a
-      # directory name in pwd.  This check is interspersed throughout
-      # FilesystemExplorer because of the conventions of basename and dirname.
-      @input.empty? or \
-      (File.directory?(@input) and @input[-1,1] == File::SEPARATOR)
-    end
-
-    def input_match_string
-      if just_entered_dir?
-        nil
-      else
-        # Need to regex-escape the input, but not parentheses.
-        escaped = Regexp.escape(File.basename(@input)).sub('\(','(') \
-                                                      .sub('\)',')')
-        str = "\\(^\\|#{@@COLUMN_SEPARATOR}\\)\\zs" + \
-              escaped + \
-              "\\ze\\(\\s*$\\|#{@@COLUMN_SEPARATOR}\\)"
-        str += '\c' if case_insensitive?
-
-        return str
-      end
-    end
-
     def on_refresh
       # Highlighting for all open buffers located in the viewed directory.
 
       view_dir = \
-        if just_entered_dir?
+        if @prompt.at_dir?
           # The last element in the path is a directory + '/' and we want to
           # see what's in it instead of its parent directory.
-          File.expand_path(@input)
+          File.expand_path @prompt.get
         else
-          File.expand_path(File.dirname(@input))
+          File.expand_path @prompt.dirname
         end
 
       exe "syn clear LustyExpOpenedFile"
@@ -616,21 +521,15 @@ class FilesystemExplorer < LustyExplorer
     end
 
     def entry_match_string(entry)
-      # Need to regex-escape the entry, but not parentheses.
-      escaped = Regexp.escape(entry).sub('\(','(').sub('\)',')')
-
-      str = "\\(^\\|#{@@COLUMN_SEPARATOR}\\)\\zs" + \
-            escaped + \
-            "\\ze\\(\\s*$\\|#{@@COLUMN_SEPARATOR}\\)"
-      return str
+      Displayer.vim_match_string(entry, false)
     end
 
     def all_entries
-      input_path = Pathname.new(@input)
-      view_path = Pathname.getwd()
+      input_path = Pathname.new @prompt.get
+      view_path = Pathname.getwd
 
       view_path += \
-        if just_entered_dir?
+        if @prompt.at_dir?
           # The last element in the path is a directory + '/' and we want to
           # see what's in it instead of its parent directory.
           input_path
@@ -647,10 +546,10 @@ class FilesystemExplorer < LustyExplorer
         # Don't show hidden files unless the user has typed a leading "." in
         # the current view_path.
         if name[0].chr == "."
-          input_base = File.basename(@input)
-          next if just_entered_dir?
+          input_base = @prompt.basename
+          next if @prompt.at_dir?
           next if input_base.empty?
-          next if File.basename(@input)[0,1] != "."
+          next if input_base[0,1] != "."
         end
 
         if (view_path + file).directory?   # (Bug in Pathname.each_entry)
@@ -666,16 +565,6 @@ class FilesystemExplorer < LustyExplorer
       matching_entries().sort
     end
 
-    def pruning_regex
-      if just_entered_dir?
-        # Nothing has been typed for this directory yet, so accept everything.
-        Regexp.new(".")
-      else
-        Regexp.new("^" + Regexp.escape(File.basename(@input)), \
-                   case_insensitive?)
-      end
-    end
-
     def tab_complete
       paths = matching_entries()
 
@@ -689,11 +578,11 @@ class FilesystemExplorer < LustyExplorer
       while (!done and start + completion.length < paths[0].length) do
 
         c = paths[0][start + completion.length, 1]
-        c.downcase! if case_insensitive?
+        c.downcase! if @prompt.insensitive?
         completion += c
 
         pattern = Regexp.new("^.{#{start}}" + Regexp.escape(completion), \
-                             case_insensitive?)
+                             @prompt.insensitive?)
 
         paths.each do |path|
           if path !~ pattern
@@ -704,25 +593,25 @@ class FilesystemExplorer < LustyExplorer
         end
       end
 
-      add_chars(completion) unless completion.length == 0
+      @prompt.add(completion) unless completion.length == 0
     end
 
     def completion_start
-      if just_entered_dir?
+      if @prompt.at_dir?
         # Nothing usable for completion available, so no completion base.
         0
       else
-        File.basename(@input).length
+        @prompt.basename.length
       end
     end
 
     def find_match(entries)
-      if just_entered_dir?
+      if @prompt.at_dir?
         nil
       else
-        target = File.basename(@input)
+        target = @prompt.basename
 
-        if case_insensitive?
+        if @prompt.insensitive?
           return entries.detect { |x| target == x.downcase }
         else
           return entries.detect { |x| target == x }
@@ -731,16 +620,17 @@ class FilesystemExplorer < LustyExplorer
     end
 
     def open_entry(name)
-      if just_entered_dir?
-        path = @input + name
-      else
-        path = File.dirname(@input) + File::SEPARATOR + name
-      end
+      path = \
+        if @prompt.at_dir?
+          @prompt.get + name
+        else
+          @prompt.dirname + File::SEPARATOR + name
+        end
 
       if File.directory?(path)
         # Recurse into the directory instead of opening it.
         tab_complete()
-        @input += File::SEPARATOR unless @input[-1,1] == File::SEPARATOR 
+        @prompt.add(File::SEPARATOR) unless @prompt.ends_with?(File::SEPARATOR)
         refresh()
       else
         load_file(path)
@@ -760,6 +650,150 @@ class FilesystemExplorer < LustyExplorer
 end
 
 
+class Prompt
+  private
+    @@PROMPT = "> "
+
+  public
+    def initialize
+      clear()
+    end
+
+    def clear
+      @input = ""
+    end
+
+    def refresh
+      VIM.message @@PROMPT + @input
+    end
+
+    def set(s)
+      @input = s
+    end
+
+    def get
+      @input
+    end
+
+    def insensitive?
+      @input == @input.downcase
+    end
+
+    def ends_with?(c)
+      @input[-1,1] == c
+    end
+
+    def add(s)
+      @input += s
+    end
+
+    def backspace
+      @input.chop!
+    end
+
+    def vim_match_string
+      if @input.empty?
+        nil
+      else
+        Displayer.vim_match_string(@input, insensitive?)
+      end
+    end
+
+    def pruning_regex
+      Regexp.new(Regexp.escape(@input), insensitive?)
+    end
+end
+
+
+class FilesystemPrompt < Prompt
+
+  def insensitive?
+    at_dir? or (basename() == basename().downcase)
+  end
+
+  def at_dir?
+    # We have not typed anything yet or have just typed the final '/' on a
+    # directory name in pwd.  This check is interspersed throughout
+    # FilesystemExplorer because of the conventions of basename and dirname.
+    @input.empty? or \
+    (File.directory?(get()) and ends_with?(File::SEPARATOR))
+  end
+
+  def add(s)
+    # Assumption: add() will only receive enough chars at a time to complete
+    # a single directory level, e.g. foo/, not foo/bar/
+
+    @input += s
+
+    if ends_with?(File::SEPARATOR)
+      # Convert the named directory to a case-sensitive version.
+
+      base = basename()
+      dir = Pathname.new dirname()
+
+      # First check to make sure we haven't already case-correctly matched
+      # a directory.
+      if dir.entries.find { |p| p.basename.to_s == base }
+        return
+      end
+
+      case_correct = dir.entries.find { |p|
+        p.basename.to_s.downcase == base
+      }.to_s
+
+      if (!case_correct.empty?)
+        @input.sub!(/#{base}#{File::SEPARATOR}$/, \
+                    case_correct + File::SEPARATOR)
+      end
+    end
+  end
+
+  def get
+    home_expansion()
+  end
+
+  def basename
+    File.basename home_expansion()
+  end
+
+  def dirname
+    File.dirname home_expansion()
+  end
+
+  def vim_match_string
+    if at_dir?
+      nil
+    else
+      Displayer.vim_match_string(basename(), insensitive?)
+    end
+  end
+
+  def pruning_regex
+    if at_dir?
+      # Nothing has been typed for this directory yet, so accept everything.
+      Regexp.new(".")
+    else
+      Regexp.new("^" + Regexp.escape(basename()), insensitive?)
+    end
+  end
+
+  private
+    def home_expansion
+      # File.expand_path() gives loud errors if the path is not valid, so we
+      # do this manually.
+      if @input[0,1] == "~"
+        if @input.length == 1
+          return ENV['HOME']
+        elsif @input[1,1] == File::SEPARATOR
+          return @input.sub('~', ENV['HOME'])
+        end
+      end
+
+      return @input
+    end
+end
+
+# Maintain MRU ordering.
 class BufferStack
   public
     def initialize
@@ -781,7 +815,7 @@ class BufferStack
 
     def pop
       return if !@enabled
-      number = eva('bufnr(expand("<afile>"))')
+      number = eva 'bufnr(expand("<afile>"))'
       @stack.delete number
     end
 
@@ -821,7 +855,7 @@ class Window
         return true
       else
         # Failed -- re-select the starting window.
-        iterate() while ($curwin != start)
+        iterate() while $curwin != start
         VIM.message "Can't find the correct window!"
         return false
       end
@@ -851,24 +885,24 @@ class SavedSettings
   def save
     @timeoutlen = eva "&timeoutlen" 
 
-    @splitbelow = (eva "&splitbelow") == "1"
-    @insertmode = (eva "&insertmode") == "1"
-    @showcmd = (eva "&showcmd") == "1"
-    @list = (eva "&list") == "1"
+    @splitbelow = eva("&splitbelow") == "1"
+    @insertmode = eva("&insertmode") == "1"
+    @showcmd = eva("&showcmd") == "1"
+    @list = eva("&list") == "1"
 
     @report = eva "&report"
 
     # Escape the quotes.
-    @reg0 = (eva "@0").gsub(/"/,'\"')
-    @reg1 = (eva "@1").gsub(/"/,'\"')
-    @reg2 = (eva "@2").gsub(/"/,'\"')
-    @reg3 = (eva "@3").gsub(/"/,'\"')
-    @reg4 = (eva "@4").gsub(/"/,'\"')
-    @reg5 = (eva "@5").gsub(/"/,'\"')
-    @reg6 = (eva "@6").gsub(/"/,'\"')
-    @reg7 = (eva "@7").gsub(/"/,'\"')
-    @reg8 = (eva "@8").gsub(/"/,'\"')
-    @reg9 = (eva "@9").gsub(/"/,'\"')
+    @reg0 = eva("@0").gsub(/"/,'\"')
+    @reg1 = eva("@1").gsub(/"/,'\"')
+    @reg2 = eva("@2").gsub(/"/,'\"')
+    @reg3 = eva("@3").gsub(/"/,'\"')
+    @reg4 = eva("@4").gsub(/"/,'\"')
+    @reg5 = eva("@5").gsub(/"/,'\"')
+    @reg6 = eva("@6").gsub(/"/,'\"')
+    @reg7 = eva("@7").gsub(/"/,'\"')
+    @reg8 = eva("@8").gsub(/"/,'\"')
+    @reg9 = eva("@9").gsub(/"/,'\"')
   end
 
   def restore
@@ -916,11 +950,30 @@ end
 
 # Manage the explorer buffer.
 class Displayer
+  private
+    @@COLUMN_SEPARATOR = "    "
 
   public
-    def initialize(title, column_separator, no_entries_string)
+    def Displayer.vim_match_string(s, case_insensitive)
+      # Create a match regex string for the given s.  This is for a Vim regex,
+      # not for a Ruby regex.
+
+      # Ruby's escaping is not the same as Vim's, so have to clean it up.
+      sanitized = Regexp.escape(s).gsub('\(','(') \
+                                  .gsub('\)',')') \
+                                  .gsub('~','\~') \
+                                  .gsub('\{','{')
+
+      str = "\\(^\\|#{@@COLUMN_SEPARATOR}\\)\\zs" + \
+            sanitized + \
+            "\\ze\\(\\s*$\\|#{@@COLUMN_SEPARATOR}\\)"
+      str += '\c' if case_insensitive
+
+      return str
+    end
+
+    def initialize(title, no_entries_string)
       @title = title
-      @column_separator = column_separator
       @no_entries_string = no_entries_string
 
       @window = nil
@@ -968,7 +1021,7 @@ class Displayer
       # Figure out the actual number of columns to use (yuck)
       cols = nil
       widths = nil
-      while (col_count > 1) do
+      while col_count > 1 do
 
         cols = columnize(entries, col_count);
 
@@ -977,7 +1030,7 @@ class Displayer
         }
 
         full_width = widths.inject { |sum, n| sum + n }
-        full_width += @column_separator.length * (col_count - 1)
+        full_width += @@COLUMN_SEPARATOR.length * (col_count - 1)
 
         if full_width <= $curwin.width
           break
@@ -995,8 +1048,8 @@ class Displayer
     end
 
     def close
-      # Only kill the buffer if we're sure it's the explorer.
-      if Window.select(@window) and \
+      # Only wipe the buffer if we're *sure* it's the explorer.
+      if Window.select @window and \
          $curbuf == @buffer and \
          $curbuf.name =~ /#{Regexp.escape(@title)}$/
           exe "bwipeout!"
@@ -1020,7 +1073,7 @@ class Displayer
           break if cols[j][i].nil?
           string += cols[j][i]
           string += " " * [(widths[j] - cols[j][i].length), 0].max
-          string += @column_separator
+          string += @@COLUMN_SEPARATOR
         end
 
         # Stretch the line to the length of the window with whitespace so that
@@ -1033,7 +1086,7 @@ class Displayer
 
       # There's a blank line at the end of the buffer because of how
       # VIM::Buffer.append works.
-      $curbuf.delete($curbuf.count)
+      $curbuf.delete $curbuf.count
       lock()
     end
 
@@ -1070,7 +1123,7 @@ class Displayer
         break unless length < $curwin.width
 
         column_count += 1
-        length += @column_separator.length
+        length += @@COLUMN_SEPARATOR.length
       end
 
       return column_count
@@ -1101,7 +1154,9 @@ $filesystem_explorer = FilesystemExplorer.new
 EOF
 
 else
-  echohl ErrorMsg | echo "Sorry, LustyExplorer requires ruby."
+  echohl ErrorMsg
+  echo "Sorry, LustyExplorer requires ruby."
+  echo "See \"Install details:\" in the script for more information."
   echohl none
 endif
 
