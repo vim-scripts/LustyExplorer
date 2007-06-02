@@ -10,30 +10,33 @@
 " Name Of File: lusty-explorer.vim
 "  Description: Dynamic Filesystem and Buffer Explorer Vim Plugin
 "   Maintainer: Stephen Bach <sjbach@users.sourceforge.net>
-" Contributors: Raimon Grau
+" Contributors: Raimon Grau, Sergey Popov
 "
-" Release Date: Wednesday, May 30, 2007
-"      Version: 1.1.2
+" Release Date: Wednesday, June 2, 2007
+"      Version: 1.2.0
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
 "        Usage: To launch the explorers:
 "
 "                 <Leader>lf  - Opens the filesystem explorer.
+"                 <Leader>lr  - Opens the filesystem explorer from the parent
+"                               directory of the current file.
 "                 <Leader>lb  - Opens the buffer explorer.
 "
 "               You can also use the commands:
 "
 "                 ":FilesystemExplorer"
+"                 ":FilesystemExplorerFromHere"
 "                 ":BufferExplorer"
 "
-"               (Personally, I map these to <Leader>f and <Leader>b)
+"               (Personally, I map these to ,f and ,r and ,b)
 "
 "               The interface is intuitive.  When one of the explorers is
 "               launched, a new window appears at bottom presenting a list of
 "               files/dirs or buffers, and in the status bar is a prompt:
 "
-"                 > 
+"                 >>
 "
 "               As you type or tab-complete a name, the list updates for
 "               possible matches.  When there is enough input to match an
@@ -54,12 +57,13 @@
 "                 - All opened files are highlighted.
 "
 "               Extra features in the filesystem explorer:
-"                 - Hidden files are not shown unless you type the first
-"                   letter in their name (which is ".").
 "                 - You can recurse into and out of directories by typing the
 "                   directory name and a slash, e.g. "stuff/" or "../"
+"                 - Hidden files are shown by typing the first letter of their
+"                   names (which is ".").
+"                 - Tilde (~) expansion, e.g. "~/" -> "/home/steve/"
 "                 - <Shift-Enter> will load all files appearing in the current
-"                   list.
+"                   list (in gvim only).
 "
 "               That's pretty much the gist of it!
 "
@@ -75,19 +79,26 @@
 " If your version of Vim does not have "+ruby" but you would still like to
 " use this plugin, you can fix it.  Here are a few tips:
 "
-" On Debian Or Ubuntu:
+" Debian Or Ubuntu:
 "     # apt-get install vim-ruby
 "
-" On Gentoo:
+" Gentoo:
 "     # USE="ruby" emerge vim
 "
+" FreeBSD:
+"     # pkg_add -r vim+ruby
+"
 " Manually:
-"     - Install Ruby.
-"     - Download the Vim source package.
-"     # ./configure --enable-rubyinterp
-"     # make && make install
+"     1. Install Ruby.
+"     2. Download the Vim source package (say, vim-7.0.tar.bz2)
+"     3. Build and install:
+"          # tar -xvjf vim-7.0.tar.bz2
+"          # ./configure --enable-rubyinterp
+"          # make && make install
 "
 " TODO:
+" - bug: NO ENTRIES is not red when input is a space
+"   - happens because LustyExpMatch declares after LustyExpNoEntries.
 " - if new_hash == previous_hash, don't bother 'repainting'.
 " - add globbing?
 "   - also add a lock key which will make the stuff that currently appears
@@ -103,9 +114,13 @@ endif
 if !exists(":FilesystemExplorer")
   command FilesystemExplorer :call <SID>FilesystemExplorerStart()
 endif
+if !exists(":FilesystemExplorerFromHere")
+  command FilesystemExplorerFromHere :call <SID>FilesystemExplorerStartFromHere()
+endif
 
 " Default mappings.
 nmap <silent> <Leader>lf :FilesystemExplorer<CR>
+nmap <silent> <Leader>lr :FilesystemExplorerFromHere<CR>
 nmap <silent> <Leader>lb :BufferExplorer<CR>
 
 " Old mappings (from DynamicExplorer).
@@ -115,6 +130,10 @@ nmap <silent> <Leader>db :BufferExplorer<CR>
 " Vim-to-ruby function calls.
 function! s:FilesystemExplorerStart()
   ruby $filesystem_explorer.run
+endfunction
+
+function! s:FilesystemExplorerStartFromHere()
+  ruby $filesystem_explorer.run_from_here
 endfunction
 
 function! s:BufferExplorerStart()
@@ -149,32 +168,18 @@ augroup End
 ruby << EOF
 require 'pathname'
 
-# Simple mappings to decrease typing.
-def exe(s)
-  VIM.command s
+class String
+  def ends_with?(s)
+    tail = self[-s.length, s.length]
+    tail == s
+  end
 end
-
-def eva(s)
-  VIM.evaluate s
-end
-
-def set(s)
-  VIM.set_option s
-end
-
-def has_syntax
-  eva('has("syntax")') != "0"
-end
-
 
 class LustyExplorer
-  private
-    @@NO_ENTRIES_STRING = "-- NO ENTRIES --" 
-
   public
     def initialize
       @settings = SavedSettings.new
-      @displayer = Displayer.new(title(), @@NO_ENTRIES_STRING)
+      @displayer = Displayer.new title()
       @prompt = nil
       @running = false
     end
@@ -215,19 +220,10 @@ class LustyExplorer
 
   private
     def refresh
-      sync_pwd()
+      @settings.sync_pwd()
       on_refresh()
       @displayer.print ordered_entries()
       @prompt.refresh
-    end
-
-    def sync_pwd
-      vim_pwd = eva("getcwd()")
-      ruby_pwd = Dir.pwd
-
-      if ruby_pwd != vim_pwd
-        Dir.chdir vim_pwd
-      end
     end
 
     def create_explorer_window
@@ -235,9 +231,9 @@ class LustyExplorer
       @displayer.create
 
       # Non-special printable characters.
-      printables =  '/!"#$%&\'()*+,-.0123456789:<=>?#@"
-                     ABCDEFGHIJKLMNOPQRSTUVWXYZ
-                     []^_`abcdefghijklmnopqrstuvwxyz{}~'
+      printables =  '/!"#$%&\'()*+,-.0123456789:<=>?#@"' \
+                    'ABCDEFGHIJKLMNOPQRSTUVWXYZ' \
+                    '[]^_`abcdefghijklmnopqrstuvwxyz{}~'
 
       map_command = "noremap <silent> <buffer> "
 
@@ -251,39 +247,24 @@ class LustyExplorer
       exe map_command + "<Bslash> :call #{self.class}KeyPressed(92)<CR>"
       exe map_command + "<Space>  :call #{self.class}KeyPressed(32)<CR>"
       exe map_command + "\026|    :call #{self.class}KeyPressed(124)<CR>"
+
       exe map_command + "<BS>     :call #{self.class}KeyPressed(8)<CR>"
+      exe map_command + "<Del>    :call #{self.class}KeyPressed(8)<CR>"
 
       exe map_command + "<CR>     :call #{self.class}KeyPressed(13)<CR>"
       exe map_command + "<S-CR>   :call #{self.class}KeyPressed(10)<CR>"
 
       exe map_command + "<Esc>    :call #{self.class}Cancel()<CR>"
       exe map_command + "<C-c>    :call #{self.class}Cancel()<CR>"
-
-      if has_syntax()
-        exe 'syn match LustyExpDir "\zs\%(\S\+ \)*\S\+\ze/" ' \
-                                   'contains=LustyExpSlash'
-        exe 'syn match LustyExpSlash "/"'
-
-        exe 'syn match LustyExpOneEntry "\%^\S\+\s\+\%$"'
-        exe 'syn match LustyExpNoEntries "\%^\s*' \
-                                         "#{@@NO_ENTRIES_STRING}" \
-                                         '\s*\%$"'
-
-        exe 'highlight link LustyExpDir Directory'
-        exe 'highlight link LustyExpSlash Function'
-        exe 'highlight link LustyExpOneEntry Type'
-        exe 'highlight link LustyExpMatch Type'
-        exe 'highlight link LustyExpCurrentBuffer Constant'
-        exe 'highlight link LustyExpOpenedFile PreProc'
-        exe 'highlight link LustyExpNoEntries ErrorMsg'
-      end
     end
 
     def on_refresh
-      # Blank
-      exe "syn clear LustyExpMatch"
-      if !@prompt.vim_match_string.nil?
-        exe "syn match LustyExpMatch \"#{@prompt.vim_match_string}\""
+      if has_syntax?
+        exe "syn clear LustyExpMatch"
+        if !@prompt.vim_match_string.nil?
+          exe "syn match LustyExpMatch \"#{@prompt.vim_match_string}\" " \
+              'contains=LustyExpModified'
+        end
       end
     end
 
@@ -325,7 +306,7 @@ class LustyExplorer
       Window.select @calling_window
       @settings.restore
       @running = false
-      VIM.message ""
+      msg ""
     end
 end
 
@@ -335,12 +316,13 @@ class BufferExplorer < LustyExplorer
     def initialize
       super
       @prompt = Prompt.new
+      @buffers = Hash.new
     end
 
     def run
       if !@running
         if VIM::Buffer.count == 1
-          VIM.message "No other buffers"
+          pretty_msg("PreProc", "No other buffers")
         else
           @current_buffer_path = Pathname.new($curbuf.name)
           super
@@ -362,16 +344,20 @@ class BufferExplorer < LustyExplorer
 
     def on_refresh
       # Highlighting for the current buffer name.
-      exe "syn clear LustyExpCurrentBuffer"
-      exe "syn match LustyExpCurrentBuffer \"#{buffer_match_string}\""
+      if has_syntax?
+        exe 'syn clear LustyExpCurrentBuffer'
+        exe "syn match LustyExpCurrentBuffer \"#{buffer_match_string()}\" " \
+            'contains=LustyExpModified'
+      end
       super
     end
 
     def all_entries
       pwd = Pathname.getwd
 
+      @buffers.clear
+
       # Generate a hash of the buffers.
-      @buffers = Hash.new
       (0..VIM::Buffer.count-1).each do |i|
 
         path = Pathname.new VIM::Buffer[i].name
@@ -387,17 +373,22 @@ class BufferExplorer < LustyExplorer
       unordered = matching_entries()
       ordered = Array.new
 
-      # Look for each buffer number in the hash.
+      # Look for each buffer stack number in the hash.
       Window.buffer_stack.get.reverse_each do |number|
         unordered.each do |name|
           if @buffers[name] == number
-            ordered << name
+            # Append a [+] if the buffer is dirty.
+            ordered << name + (modified?(number) ? " [+]" : "")
             break
           end
         end
       end
 
       return ordered
+    end
+
+    def modified?(b)
+      eva("getbufvar(#{b}, '&modified')") != "0"
     end
 
     def tab_complete
@@ -409,9 +400,9 @@ class BufferExplorer < LustyExplorer
 
       paths = matching_entries()
 
-      return if paths.length <= 0 or @prompt.get.length <= 0
+      return if paths.length <= 0 or @prompt.input.length <= 0
 
-      string = @prompt.get
+      string = @prompt.input
       done = false
       while !done do
         first = paths[0]
@@ -443,9 +434,9 @@ class BufferExplorer < LustyExplorer
 
     def find_match(entries)
       if @prompt.insensitive?
-        entries.detect { |x| @prompt.get == x.downcase }
+        entries.detect { |x| @prompt.input == x.downcase }
       else
-        entries.detect { |x| @prompt.get == x }
+        entries.detect { |x| @prompt.input == x }
       end
     end
 
@@ -466,6 +457,25 @@ class FilesystemExplorer < LustyExplorer
       @prompt = FilesystemPrompt.new
     end
 
+    def run_from_here
+      if !$curbuf.name.nil?
+        # Cache the current directory.
+        @pwd = Dir.pwd
+        exe "cd #{File.dirname($curbuf.name).gsub(' ', '\ ')}"
+      end
+
+      run()
+    end
+
+    def cleanup
+      if @pwd
+        # Restore the previous pwd.
+        exe "cd #{@pwd.gsub(' ', '\ ')}"
+        @pwd = nil
+      end
+      super
+    end
+
     def key_pressed()
       i = eva("a:code_arg").to_i
     
@@ -474,7 +484,7 @@ class FilesystemExplorer < LustyExplorer
         matching_entries().each do |e|
           path = \
             if @prompt.at_dir?
-              @prompt.get + e
+              @prompt.input + e
             else
               @prompt.dirname + File::SEPARATOR + e
             end
@@ -499,21 +509,24 @@ class FilesystemExplorer < LustyExplorer
         if @prompt.at_dir?
           # The last element in the path is a directory + '/' and we want to
           # see what's in it instead of its parent directory.
-          File.expand_path @prompt.get
+          File.expand_path @prompt.input
         else
           File.expand_path @prompt.dirname
         end
 
-      exe "syn clear LustyExpOpenedFile"
+      if has_syntax?
+        exe "syn clear LustyExpOpenedFile"
 
-      (0..VIM::Buffer.count-1).each do |i|
-        next if VIM::Buffer[i].name.nil?
+        # TODO speed up
+        (0..VIM::Buffer.count-1).each do |i|
+          next if VIM::Buffer[i].name.nil?
 
-        dir = File.dirname VIM::Buffer[i].name
-        base = File.basename VIM::Buffer[i].name
+          dir = File.dirname VIM::Buffer[i].name
+          base = File.basename VIM::Buffer[i].name
 
-        if dir == view_dir
-          exe "syn match LustyExpOpenedFile \"#{entry_match_string(base)}\""
+          if dir == view_dir
+            exe "syn match LustyExpOpenedFile \"#{entry_match_string(base)}\""
+          end
         end
       end
 
@@ -525,7 +538,7 @@ class FilesystemExplorer < LustyExplorer
     end
 
     def all_entries
-      input_path = Pathname.new @prompt.get
+      input_path = Pathname.new @prompt.input
       view_path = Pathname.getwd
 
       view_path += \
@@ -537,9 +550,9 @@ class FilesystemExplorer < LustyExplorer
           input_path.dirname
         end
 
-      # Generate an arry of the files
+      # Generate an array of the files
       files = Array.new
-      view_path.each_entry do |file|
+      view_path.directory? && view_path.each_entry do |file|
         name = file.basename.to_s
         next if name == "."   # Skip pwd
 
@@ -622,7 +635,7 @@ class FilesystemExplorer < LustyExplorer
     def open_entry(name)
       path = \
         if @prompt.at_dir?
-          @prompt.get + name
+          @prompt.input + name
         else
           @prompt.dirname + File::SEPARATOR + name
         end
@@ -639,20 +652,17 @@ class FilesystemExplorer < LustyExplorer
     end
 
     def load_file(path)
-      # Remove leading './' for files in pwd.
-      path.sub!(/^\.\//,"")
+      # Remove the leading ./ for files in pwd and escape spaces for Vim.
+      sanitized = path.sub(/^\.\//,"").gsub(' ', '\ ')
 
-      # Escape spaces.
-      path.gsub!(' ', '\ ')
-
-      exe "silent e #{path}" if Window.select(@calling_window)
+      exe "silent e #{sanitized}" if Window.select(@calling_window)
     end
 end
 
 
 class Prompt
   private
-    @@PROMPT = "> "
+    @@PROMPT = ">> "
 
   public
     def initialize
@@ -664,14 +674,14 @@ class Prompt
     end
 
     def refresh
-      VIM.message @@PROMPT + @input
+      pretty_msg("Comment", @@PROMPT, "None", @input, "Underlined", " ")
     end
 
     def set(s)
       @input = s
     end
 
-    def get
+    def input
       @input
     end
 
@@ -680,7 +690,7 @@ class Prompt
     end
 
     def ends_with?(c)
-      @input[-1,1] == c
+      @input.ends_with? c
     end
 
     def add(s)
@@ -704,19 +714,18 @@ class Prompt
     end
 end
 
-
 class FilesystemPrompt < Prompt
-
-  def insensitive?
-    at_dir? or (basename() == basename().downcase)
-  end
 
   def at_dir?
     # We have not typed anything yet or have just typed the final '/' on a
     # directory name in pwd.  This check is interspersed throughout
     # FilesystemExplorer because of the conventions of basename and dirname.
     @input.empty? or \
-    (File.directory?(get()) and ends_with?(File::SEPARATOR))
+    (File.directory?(input()) and @input.ends_with?(File::SEPARATOR))
+  end
+
+  def insensitive?
+    at_dir? or (basename() == basename().downcase)
   end
 
   def add(s)
@@ -725,11 +734,13 @@ class FilesystemPrompt < Prompt
 
     @input += s
 
-    if ends_with?(File::SEPARATOR)
+    if @input.ends_with?(File::SEPARATOR)
       # Convert the named directory to a case-sensitive version.
 
       base = basename()
       dir = Pathname.new dirname()
+
+      return unless dir.directory?
 
       # First check to make sure we haven't already case-correctly matched
       # a directory.
@@ -748,7 +759,7 @@ class FilesystemPrompt < Prompt
     end
   end
 
-  def get
+  def input
     home_expansion()
   end
 
@@ -856,7 +867,7 @@ class Window
       else
         # Failed -- re-select the starting window.
         iterate() while $curwin != start
-        VIM.message "Can't find the correct window!"
+        pretty_msg("ErrorMsg", "Can't find the correct window!")
         return false
       end
     end
@@ -892,17 +903,17 @@ class SavedSettings
 
     @report = eva "&report"
 
-    # Escape the quotes.
-    @reg0 = eva("@0").gsub(/"/,'\"')
-    @reg1 = eva("@1").gsub(/"/,'\"')
-    @reg2 = eva("@2").gsub(/"/,'\"')
-    @reg3 = eva("@3").gsub(/"/,'\"')
-    @reg4 = eva("@4").gsub(/"/,'\"')
-    @reg5 = eva("@5").gsub(/"/,'\"')
-    @reg6 = eva("@6").gsub(/"/,'\"')
-    @reg7 = eva("@7").gsub(/"/,'\"')
-    @reg8 = eva("@8").gsub(/"/,'\"')
-    @reg9 = eva("@9").gsub(/"/,'\"')
+    # Escape the quotes and backslashes.  Ruby backreferences are weird!
+    @reg0 = eva("@0").gsub(/["\\]/,'\\\\\0')
+    @reg1 = eva("@1").gsub(/["\\]/,'\\\\\0')
+    @reg2 = eva("@2").gsub(/["\\]/,'\\\\\0')
+    @reg3 = eva("@3").gsub(/["\\]/,'\\\\\0')
+    @reg4 = eva("@4").gsub(/["\\]/,'\\\\\0')
+    @reg5 = eva("@5").gsub(/["\\]/,'\\\\\0')
+    @reg6 = eva("@6").gsub(/["\\]/,'\\\\\0')
+    @reg7 = eva("@7").gsub(/["\\]/,'\\\\\0')
+    @reg8 = eva("@8").gsub(/["\\]/,'\\\\\0')
+    @reg9 = eva("@9").gsub(/["\\]/,'\\\\\0')
   end
 
   def restore
@@ -945,6 +956,15 @@ class SavedSettings
     exe 'let @8 = "' + @reg8 + '"'
     exe 'let @9 = "' + @reg9 + '"'
   end
+
+  def sync_pwd
+    vim_pwd = eva("getcwd()")
+    ruby_pwd = Dir.pwd
+
+    if ruby_pwd != vim_pwd
+      Dir.chdir vim_pwd
+    end
+  end
 end
 
 
@@ -952,6 +972,7 @@ end
 class Displayer
   private
     @@COLUMN_SEPARATOR = "    "
+    @@NO_ENTRIES_STRING = "-- NO ENTRIES --" 
 
   public
     def Displayer.vim_match_string(s, case_insensitive)
@@ -964,17 +985,17 @@ class Displayer
                                   .gsub('~','\~') \
                                   .gsub('\{','{')
 
-      str = "\\(^\\|#{@@COLUMN_SEPARATOR}\\)\\zs" + \
-            sanitized + \
-            "\\ze\\(\\s*$\\|#{@@COLUMN_SEPARATOR}\\)"
+      str = "\\%(^\\|#{@@COLUMN_SEPARATOR}\\)" \
+            "\\zs" + sanitized + "\\%( \\[+\\]\\)\\?" + "\\ze" \
+            "\\%(\\s*$\\|#{@@COLUMN_SEPARATOR}\\)"
+
       str += '\c' if case_insensitive
 
       return str
     end
 
-    def initialize(title, no_entries_string)
+    def initialize(title)
       @title = title
-      @no_entries_string = no_entries_string
 
       @window = nil
       @buffer = nil
@@ -1006,6 +1027,33 @@ class Displayer
       set "report=9999"
 
       #TODO -- cpoptions?
+
+      if has_syntax?
+        exe 'syn match LustyExpSlash "/" contained'
+        exe 'syn match LustyExpDir "\zs\%(\S\+ \)*\S\+/\ze" ' \
+                                   'contains=LustyExpSlash'
+
+        exe 'syn match LustyExpModified " \[+\]"'
+        exe 'syn match LustyExpOneEntry "' \
+              '\%^\%(\S\+ \)*\S\+' \
+              ' \+\%$" ' \
+              'contains=LustyExpModified'
+
+        #FIXME oneentry should take precedence over active buffer
+
+        exe 'syn match LustyExpNoEntries "\%^\s*' \
+                                         "#{@@NO_ENTRIES_STRING}" \
+                                         '\s*\%$"'
+
+        exe 'highlight link LustyExpDir Directory'
+        exe 'highlight link LustyExpSlash Function'
+        exe 'highlight link LustyExpOneEntry Type'
+        exe 'highlight link LustyExpMatch Type'
+        exe 'highlight link LustyExpModified Special'
+        exe 'highlight link LustyExpCurrentBuffer Constant'
+        exe 'highlight link LustyExpOpenedFile PreProc'
+        exe 'highlight link LustyExpNoEntries ErrorMsg'
+      end
     end
 
     def print(entries)
@@ -1059,7 +1107,6 @@ class Displayer
     end
 
   private
-
     def print_columns(cols, widths)
       unlock_and_clear()
 
@@ -1093,7 +1140,8 @@ class Displayer
     def print_no_entries
       unlock_and_clear()
       $curwin.height = 1
-      $curbuf[1] = @no_entries_string.center($curwin.width, " ")
+
+      $curbuf[1] = @@NO_ENTRIES_STRING.center($curwin.width, " ")
       lock()
     end
 
@@ -1145,6 +1193,42 @@ class Displayer
       return cols
     end
 end
+
+# Simple mappings to decrease typing.
+def exe(s)
+  VIM.command s
+end
+
+def eva(s)
+  VIM.evaluate s
+end
+
+def set(s)
+  VIM.set_option s
+end
+
+def msg(s)
+  VIM.message s
+end
+
+def pretty_msg(*rest)
+  return if rest.length == 0
+  return if rest.length % 2 != 0
+
+  i = 0
+  while i < rest.length do
+    exe "echohl #{rest[i]}"
+    exe "echon '#{rest[i+1]}'"
+    i += 2
+  end
+
+  exe 'echohl None'
+end
+
+def has_syntax?
+  eva('has("syntax")') != "0"
+end
+
 
 Window.init
 $buffer_explorer = BufferExplorer.new
