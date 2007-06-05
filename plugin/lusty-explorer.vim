@@ -10,10 +10,10 @@
 " Name Of File: lusty-explorer.vim
 "  Description: Dynamic Filesystem and Buffer Explorer Vim Plugin
 "   Maintainer: Stephen Bach <sjbach@users.sourceforge.net>
-" Contributors: Raimon Grau, Sergey Popov
+" Contributors: Raimon Grau, Sergey Popov, Yuichi Tateno
 "
-" Release Date: Wednesday, June 2, 2007
-"      Version: 1.2.0
+" Release Date: Tuesday, June 5, 2007
+"      Version: 1.2.1
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -77,24 +77,8 @@
 " Alternatively, just try sourcing this script.
 "
 " If your version of Vim does not have "+ruby" but you would still like to
-" use this plugin, you can fix it.  Here are a few tips:
-"
-" Debian Or Ubuntu:
-"     # apt-get install vim-ruby
-"
-" Gentoo:
-"     # USE="ruby" emerge vim
-"
-" FreeBSD:
-"     # pkg_add -r vim+ruby
-"
-" Manually:
-"     1. Install Ruby.
-"     2. Download the Vim source package (say, vim-7.0.tar.bz2)
-"     3. Build and install:
-"          # tar -xvjf vim-7.0.tar.bz2
-"          # ./configure --enable-rubyinterp
-"          # make && make install
+" use this plugin, you can fix it.  See the very bottom of this script for
+" instructions.
 "
 " TODO:
 " - bug: NO ENTRIES is not red when input is a space
@@ -196,13 +180,14 @@ class LustyExplorer
     end
 
     def key_pressed()
+      # Grab argument from the Vim function.
       i = eva("a:code_arg").to_i
 
       case i
         when 32..126          # Printable characters
           c = i.chr
           @prompt.add c
-        when 8                # Backspace
+        when 8                # Backspace/Del/C-h
           @prompt.backspace
         when 9                # Tab
           tab_complete()
@@ -230,6 +215,8 @@ class LustyExplorer
 
       @displayer.create
 
+      # Setup key mappings to reroute user input.
+
       # Non-special printable characters.
       printables =  '/!"#$%&\'()*+,-.0123456789:<=>?#@"' \
                     'ABCDEFGHIJKLMNOPQRSTUVWXYZ' \
@@ -237,7 +224,6 @@ class LustyExplorer
 
       map_command = "noremap <silent> <buffer> "
 
-      # Grab all input by mapping to a function call.
       printables.each_byte do |b|
         exe map_command + "<Char-#{b}> :call #{self.class}KeyPressed(#{b})<CR>"
       end
@@ -250,6 +236,7 @@ class LustyExplorer
 
       exe map_command + "<BS>     :call #{self.class}KeyPressed(8)<CR>"
       exe map_command + "<Del>    :call #{self.class}KeyPressed(8)<CR>"
+      exe map_command + "<C-h>    :call #{self.class}KeyPressed(8)<CR>"
 
       exe map_command + "<CR>     :call #{self.class}KeyPressed(13)<CR>"
       exe map_command + "<S-CR>   :call #{self.class}KeyPressed(10)<CR>"
@@ -461,7 +448,7 @@ class FilesystemExplorer < LustyExplorer
       if !$curbuf.name.nil?
         # Cache the current directory.
         @pwd = Dir.pwd
-        exe "cd #{File.dirname($curbuf.name).gsub(' ', '\ ')}"
+        exe "cd #{vim_file_escape(File.dirname($curbuf.name))}"
       end
 
       run()
@@ -470,7 +457,7 @@ class FilesystemExplorer < LustyExplorer
     def cleanup
       if @pwd
         # Restore the previous pwd.
-        exe "cd #{@pwd.gsub(' ', '\ ')}"
+        exe "cd #{vim_file_escape(@pwd)}"
         @pwd = nil
       end
       super
@@ -652,8 +639,8 @@ class FilesystemExplorer < LustyExplorer
     end
 
     def load_file(path)
-      # Remove the leading ./ for files in pwd and escape spaces for Vim.
-      sanitized = path.sub(/^\.\//,"").gsub(' ', '\ ')
+      # Escape for Vim and remove leading ./ for files in pwd.
+      sanitized = vim_file_escape(path).sub(/^\.\//,"")
 
       exe "silent e #{sanitized}" if Window.select(@calling_window)
     end
@@ -753,7 +740,7 @@ class FilesystemPrompt < Prompt
       }.to_s
 
       if (!case_correct.empty?)
-        @input.sub!(/#{base}#{File::SEPARATOR}$/, \
+        @input.sub!(/#{Regexp.escape(base)}#{File::SEPARATOR}$/, \
                     case_correct + File::SEPARATOR)
       end
     end
@@ -903,17 +890,16 @@ class SavedSettings
 
     @report = eva "&report"
 
-    # Escape the quotes and backslashes.  Ruby backreferences are weird!
-    @reg0 = eva("@0").gsub(/["\\]/,'\\\\\0')
-    @reg1 = eva("@1").gsub(/["\\]/,'\\\\\0')
-    @reg2 = eva("@2").gsub(/["\\]/,'\\\\\0')
-    @reg3 = eva("@3").gsub(/["\\]/,'\\\\\0')
-    @reg4 = eva("@4").gsub(/["\\]/,'\\\\\0')
-    @reg5 = eva("@5").gsub(/["\\]/,'\\\\\0')
-    @reg6 = eva("@6").gsub(/["\\]/,'\\\\\0')
-    @reg7 = eva("@7").gsub(/["\\]/,'\\\\\0')
-    @reg8 = eva("@8").gsub(/["\\]/,'\\\\\0')
-    @reg9 = eva("@9").gsub(/["\\]/,'\\\\\0')
+    @reg0 = vim_single_quote_escape(eva("@0"))
+    @reg1 = vim_single_quote_escape(eva("@1"))
+    @reg2 = vim_single_quote_escape(eva("@2"))
+    @reg3 = vim_single_quote_escape(eva("@3"))
+    @reg4 = vim_single_quote_escape(eva("@4"))
+    @reg5 = vim_single_quote_escape(eva("@5"))
+    @reg6 = vim_single_quote_escape(eva("@6"))
+    @reg7 = vim_single_quote_escape(eva("@7"))
+    @reg8 = vim_single_quote_escape(eva("@8"))
+    @reg9 = vim_single_quote_escape(eva("@9"))
   end
 
   def restore
@@ -945,16 +931,16 @@ class SavedSettings
 
     exe "set report=#{@report}"
 
-    exe 'let @0 = "' + @reg0 + '"'
-    exe 'let @1 = "' + @reg1 + '"'
-    exe 'let @2 = "' + @reg2 + '"'
-    exe 'let @3 = "' + @reg3 + '"'
-    exe 'let @4 = "' + @reg4 + '"'
-    exe 'let @5 = "' + @reg5 + '"'
-    exe 'let @6 = "' + @reg6 + '"'
-    exe 'let @7 = "' + @reg7 + '"'
-    exe 'let @8 = "' + @reg8 + '"'
-    exe 'let @9 = "' + @reg9 + '"'
+    exe "let @0 = '#{@reg0}'"
+    exe "let @1 = '#{@reg1}'"
+    exe "let @2 = '#{@reg2}'"
+    exe "let @3 = '#{@reg3}'"
+    exe "let @4 = '#{@reg4}'"
+    exe "let @5 = '#{@reg5}'"
+    exe "let @6 = '#{@reg6}'"
+    exe "let @7 = '#{@reg7}'"
+    exe "let @8 = '#{@reg8}'"
+    exe "let @9 = '#{@reg9}'"
   end
 
   def sync_pwd
@@ -967,7 +953,6 @@ class SavedSettings
   end
 end
 
-
 # Manage the explorer buffer.
 class Displayer
   private
@@ -979,15 +964,9 @@ class Displayer
       # Create a match regex string for the given s.  This is for a Vim regex,
       # not for a Ruby regex.
 
-      # Ruby's escaping is not the same as Vim's, so have to clean it up.
-      sanitized = Regexp.escape(s).gsub('\(','(') \
-                                  .gsub('\)',')') \
-                                  .gsub('~','\~') \
-                                  .gsub('\{','{')
-
-      str = "\\%(^\\|#{@@COLUMN_SEPARATOR}\\)" \
-            "\\zs" + sanitized + "\\%( \\[+\\]\\)\\?" + "\\ze" \
-            "\\%(\\s*$\\|#{@@COLUMN_SEPARATOR}\\)"
+      str = '\%(^\|' + @@COLUMN_SEPARATOR + '\)' \
+            '\zs' + vim_regex_escape(s) + '\%( \[+\]\)\?' + '\ze' \
+            '\%(\s*$\|' + @@COLUMN_SEPARATOR + '\)'
 
       str += '\c' if case_insensitive
 
@@ -996,7 +975,6 @@ class Displayer
 
     def initialize(title)
       @title = title
-
       @window = nil
       @buffer = nil
     end
@@ -1194,6 +1172,21 @@ class Displayer
     end
 end
 
+def vim_single_quote_escape(s)
+  # Everything in a Vim single quoted string is literal, except single quotes.
+  # Single quotes are escaped by doubling them.
+  s.gsub("'", "''")
+end
+
+def vim_file_escape(s)
+  # Escape slashes, open square braces, spaces, and double quotes.
+  s.gsub(/\\/, '\\\\\\').gsub('[', '\[').gsub(' ', '\ ').gsub('"', '\"')
+end
+
+def vim_regex_escape(s)
+  s.gsub(/[\]\[.~"^$\\*]/,'\\\\\0')
+end
+
 # Simple mappings to decrease typing.
 def exe(s)
   VIM.command s
@@ -1239,8 +1232,28 @@ EOF
 
 else
   echohl ErrorMsg
-  echo "Sorry, LustyExplorer requires ruby."
-  echo "See \"Install details:\" in the script for more information."
+  echon "Sorry, LustyExplorer requires ruby.  "
+  echon "Here are some tips for adding it:\n"
+
+  echo "Debian / Ubuntu:"
+  echo "    # apt-get install vim-ruby\n"
+
+  echo "Fedora:"
+  echo "    # yum install vim-enhanced\n"
+
+  echo "Gentoo:"
+  echo "    # USE=\"ruby\" emerge vim\n"
+
+  echo "FreeBSD:"
+  echo "    # pkg_add -r vim+ruby\n"
+
+  echo "Manually:"
+  echo "    1. Install Ruby."
+  echo "    2. Download the Vim source package (say, vim-7.0.tar.bz2)"
+  echo "    3. Build and install:"
+  echo "         # tar -xvjf vim-7.0.tar.bz2"
+  echo "         # ./configure --enable-rubyinterp"
+  echo "         # make && make install"
   echohl none
 endif
 
