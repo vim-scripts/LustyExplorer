@@ -10,10 +10,10 @@
 " Name Of File: lusty-explorer.vim
 "  Description: Dynamic Filesystem and Buffer Explorer Vim Plugin
 "   Maintainer: Stephen Bach <sjbach@users.sourceforge.net>
-" Contributors: Raimon Grau, Sergey Popov, Yuichi Tateno
+" Contributors: Raimon Grau, Sergey Popov, Yuichi Tateno, Bernhard Walle
 "
-" Release Date: Tuesday, June 5, 2007
-"      Version: 1.2.1
+" Release Date: Monday, June 18, 2007
+"      Version: 1.2.2
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -81,6 +81,8 @@
 " instructions.
 "
 " TODO:
+" - when an edited file is in nowrap mode and the explorer is called while the
+"   current window is scrolled to the right, name truncation occurs.
 " - bug: NO ENTRIES is not red when input is a space
 "   - happens because LustyExpMatch declares after LustyExpNoEntries.
 " - if new_hash == previous_hash, don't bother 'repainting'.
@@ -889,6 +891,8 @@ class SavedSettings
     @list = eva("&list") == "1"
 
     @report = eva "&report"
+    @sidescroll = eva "&sidescroll"
+    @sidescrolloff = eva "&sidescrolloff"
 
     @reg0 = vim_single_quote_escape(eva("@0"))
     @reg1 = vim_single_quote_escape(eva("@1"))
@@ -930,6 +934,8 @@ class SavedSettings
     end
 
     exe "set report=#{@report}"
+    exe "set sidescroll=#{@sidescroll}"
+    exe "set sidescrolloff=#{@sidescrolloff}"
 
     exe "let @0 = '#{@reg0}'"
     exe "let @1 = '#{@reg1}'"
@@ -1003,6 +1009,8 @@ class Displayer
       set "noshowcmd"
       set "nolist"
       set "report=9999"
+      set "sidescroll=0"
+      set "sidescrolloff=0"
 
       #TODO -- cpoptions?
 
