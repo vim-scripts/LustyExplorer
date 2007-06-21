@@ -12,8 +12,8 @@
 "   Maintainer: Stephen Bach <sjbach@users.sourceforge.net>
 " Contributors: Raimon Grau, Sergey Popov, Yuichi Tateno, Bernhard Walle
 "
-" Release Date: Monday, June 18, 2007
-"      Version: 1.2.2
+" Release Date: Monday, June 21, 2007
+"      Version: 1.2.3
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -77,8 +77,16 @@
 " Alternatively, just try sourcing this script.
 "
 " If your version of Vim does not have "+ruby" but you would still like to
-" use this plugin, you can fix it.  See the very bottom of this script for
-" instructions.
+" use this plugin, you can fix it.  See the "Check for Ruby functionality"
+" comment below for instructions.
+"
+" If you are using the same Vim configuration and plugins for multiple
+" machines, some of which have Ruby and some of which don't, you may want to
+" turn off the "Sorry, LustyExplorer requires ruby" warning.  You can do so
+" like this (in .vimrc):
+"
+"   let g:LustyExplorerSuppressRubyWarning = 1
+"
 "
 " TODO:
 " - when an edited file is in nowrap mode and the explorer is called while the
@@ -91,18 +99,49 @@
 "     listed the basis for the next match attempt.
 "   - (also unlock key)
 
-if has("ruby")
+" Exit quickly when already loaded or when 'compatible' is set.
+if exists("g:loaded_lustyexplorer")
+  finish
+endif
+
+" Check for Ruby functionality.
+if !has("ruby")
+  if !exists("g:LustyExplorerSuppressRubyWarning") ||
+     \ g:LustyExplorerSuppressRubyWarning == "0"
+    echohl ErrorMsg
+    echon "Sorry, LustyExplorer requires ruby.  "
+    echon "Here are some tips for adding it:\n"
+
+    echo "Debian / Ubuntu:"
+    echo "    # apt-get install vim-ruby\n"
+
+    echo "Fedora:"
+    echo "    # yum install vim-enhanced\n"
+
+    echo "Gentoo:"
+    echo "    # USE=\"ruby\" emerge vim\n"
+
+    echo "FreeBSD:"
+    echo "    # pkg_add -r vim+ruby\n"
+
+    echo "Manually:"
+    echo "    1. Install Ruby."
+    echo "    2. Download the Vim source package (say, vim-7.0.tar.bz2)"
+    echo "    3. Build and install:"
+    echo "         # tar -xvjf vim-7.0.tar.bz2"
+    echo "         # ./configure --enable-rubyinterp"
+    echo "         # make && make install"
+    echohl none
+  endif
+  finish
+endif
+
+let g:loaded_lustyexplorer = "yep"
 
 " Commands.
-if !exists(":BufferExplorer")
-  command BufferExplorer :call <SID>BufferExplorerStart()
-endif
-if !exists(":FilesystemExplorer")
-  command FilesystemExplorer :call <SID>FilesystemExplorerStart()
-endif
-if !exists(":FilesystemExplorerFromHere")
-  command FilesystemExplorerFromHere :call <SID>FilesystemExplorerStartFromHere()
-endif
+command BufferExplorer :call <SID>BufferExplorerStart()
+command FilesystemExplorer :call <SID>FilesystemExplorerStart()
+command FilesystemExplorerFromHere :call <SID>FilesystemExplorerStartFromHere()
 
 " Default mappings.
 nmap <silent> <Leader>lf :FilesystemExplorer<CR>
@@ -1237,31 +1276,4 @@ $filesystem_explorer = FilesystemExplorer.new
 
 
 EOF
-
-else
-  echohl ErrorMsg
-  echon "Sorry, LustyExplorer requires ruby.  "
-  echon "Here are some tips for adding it:\n"
-
-  echo "Debian / Ubuntu:"
-  echo "    # apt-get install vim-ruby\n"
-
-  echo "Fedora:"
-  echo "    # yum install vim-enhanced\n"
-
-  echo "Gentoo:"
-  echo "    # USE=\"ruby\" emerge vim\n"
-
-  echo "FreeBSD:"
-  echo "    # pkg_add -r vim+ruby\n"
-
-  echo "Manually:"
-  echo "    1. Install Ruby."
-  echo "    2. Download the Vim source package (say, vim-7.0.tar.bz2)"
-  echo "    3. Build and install:"
-  echo "         # tar -xvjf vim-7.0.tar.bz2"
-  echo "         # ./configure --enable-rubyinterp"
-  echo "         # make && make install"
-  echohl none
-endif
 
