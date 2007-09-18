@@ -12,8 +12,8 @@
 "   Maintainer: Stephen Bach <sjbach@users.sourceforge.net>
 " Contributors: Raimon Grau, Sergey Popov, Yuichi Tateno, Bernhard Walle
 "
-" Release Date: Monday, June 21, 2007
-"      Version: 1.2.3
+" Release Date: Monday, September 18, 2007
+"      Version: 1.2.4
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -40,8 +40,8 @@
 "
 "               As you type or tab-complete a name, the list updates for
 "               possible matches.  When there is enough input to match an
-"               entry uniquely, press <ENTER> to open it in your last used
-"               window, or press <ESC> or <Ctrl-c> to cancel.
+"               entry uniquely, press <ENTER> or <TAB> to open it in your last
+"               used window, or press <ESC>, <Ctrl-c> or <Ctrl-g> to cancel.
 "
 "               Matching is case-insensitive unless a capital letter appears
 "               in the input (similar to "smartcase" mode in Vim).
@@ -99,7 +99,7 @@
 "     listed the basis for the next match attempt.
 "   - (also unlock key)
 
-" Exit quickly when already loaded or when 'compatible' is set.
+" Exit quickly when already loaded.
 if exists("g:loaded_lustyexplorer")
   finish
 endif
@@ -232,6 +232,7 @@ class LustyExplorer
           @prompt.backspace
         when 9                # Tab
           tab_complete()
+          return if choose_if_1_remaining()
         when 13               # Enter
           choose()
           return
@@ -284,6 +285,7 @@ class LustyExplorer
 
       exe map_command + "<Esc>    :call #{self.class}Cancel()<CR>"
       exe map_command + "<C-c>    :call #{self.class}Cancel()<CR>"
+      exe map_command + "<C-g>    :call #{self.class}Cancel()<CR>"
     end
 
     def on_refresh
@@ -314,15 +316,29 @@ class LustyExplorer
     def choose
       entries = matching_entries()
 
-      if entries.length == 1
+      if entries.length == 0
+        # No matches -- create a new buffer
+        name = @prompt.input()
+      elsif entries.length == 1
         name = entries.first()
       else
         # There are multiple entries, but we could still match one.
-        name = find_match(entries)
-        return if name.nil?
+        name = find_complete_match(entries)
       end
 
+      return if name.nil?
       open_entry(name)
+    end
+
+    def choose_if_1_remaining
+      entries = matching_entries()
+
+      if entries.length == 1
+        open_entry(entries.first())
+        true
+      else
+        false
+      end
     end
 
     def open_entry(name)
@@ -460,7 +476,7 @@ class BufferExplorer < LustyExplorer
       @prompt.set(string)
     end
 
-    def find_match(entries)
+    def find_complete_match(entries)
       if @prompt.insensitive?
         entries.detect { |x| @prompt.input == x.downcase }
       else
@@ -468,10 +484,15 @@ class BufferExplorer < LustyExplorer
       end
     end
 
-    def open_entry(path)
-      number = @buffers[path]
-      if !number.nil? and Window.select(@calling_window)
-        exe "silent b #{number}"
+    def open_entry(name)
+      number = @buffers[name]
+      if Window.select(@calling_window)
+        if number
+          exe "silent b #{number}"
+        elsif !name.include?(File::SEPARATOR)
+          # Only create a new buffer if there isn't a "/" in its name.
+          exe "silent e #{vim_file_escape(name)}"
+        end
       end
       super
     end
@@ -646,7 +667,7 @@ class FilesystemExplorer < LustyExplorer
       end
     end
 
-    def find_match(entries)
+    def find_complete_match(entries)
       if @prompt.at_dir?
         nil
       else
@@ -673,6 +694,9 @@ class FilesystemExplorer < LustyExplorer
         tab_complete()
         @prompt.add(File::SEPARATOR) unless @prompt.ends_with?(File::SEPARATOR)
         refresh()
+      elsif name.include?(File::SEPARATOR)
+        # Don't open a fake file/buffer with "/" in its name.
+        return
       else
         load_file(path)
         super
