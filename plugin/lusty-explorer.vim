@@ -10,10 +10,11 @@
 " Name Of File: lusty-explorer.vim
 "  Description: Dynamic Filesystem and Buffer Explorer Vim Plugin
 "   Maintainer: Stephen Bach <sjbach@users.sourceforge.net>
-" Contributors: Raimon Grau, Sergey Popov, Yuichi Tateno, Bernhard Walle
+" Contributors: Raimon Grau, Sergey Popov, Yuichi Tateno, Bernhard Walle,
+"               Rajendra Badapanda
 "
-" Release Date: Monday, September 18, 2007
-"      Version: 1.2.4
+" Release Date: Monday, October 4, 2007
+"      Version: 1.2.5
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -89,6 +90,7 @@
 "
 "
 " TODO:
+" - add option to hide files with certain extensions.
 " - when an edited file is in nowrap mode and the explorer is called while the
 "   current window is scrolled to the right, name truncation occurs.
 " - bug: NO ENTRIES is not red when input is a space
@@ -291,7 +293,7 @@ class LustyExplorer
     def on_refresh
       if has_syntax?
         exe "syn clear LustyExpMatch"
-        if !@prompt.vim_match_string.nil?
+        unless @prompt.vim_match_string.nil?
           exe "syn match LustyExpMatch \"#{@prompt.vim_match_string}\" " \
               'contains=LustyExpModified'
         end
@@ -364,13 +366,10 @@ class BufferExplorer < LustyExplorer
     end
 
     def run
-      if !@running
-        if VIM::Buffer.count == 1
-          pretty_msg("PreProc", "No other buffers")
-        else
-          @current_buffer_path = Pathname.new($curbuf.name)
+      unless @running
+          @curbuf_path = $curbuf.name.nil? ? Pathname.pwd \
+                                           : Pathname.new($curbuf.name)
           super
-        end
       end
     end
 
@@ -381,7 +380,7 @@ class BufferExplorer < LustyExplorer
 
     def buffer_match_string
       pwd = Pathname.getwd
-      relative_path = @current_buffer_path.relative_path_from(pwd).to_s
+      relative_path = @curbuf_path.relative_path_from(pwd).to_s
 
       Displayer.vim_match_string(relative_path, @prompt.insensitive?)
     end
@@ -403,6 +402,7 @@ class BufferExplorer < LustyExplorer
 
       # Generate a hash of the buffers.
       (0..VIM::Buffer.count-1).each do |i|
+        next if VIM::Buffer[i].name.nil?
 
         path = Pathname.new VIM::Buffer[i].name
         relative = path.relative_path_from(pwd).to_s
@@ -507,7 +507,7 @@ class FilesystemExplorer < LustyExplorer
     end
 
     def run_from_here
-      if !$curbuf.name.nil?
+      unless $curbuf.name.nil?
         # Cache the current directory.
         @pwd = Dir.pwd
         exe "cd #{vim_file_escape(File.dirname($curbuf.name))}"
