@@ -13,8 +13,8 @@
 " Contributors: Raimon Grau, Sergey Popov, Yuichi Tateno, Bernhard Walle,
 "               Rajendra Badapanda
 "
-" Release Date: Monday, October 4, 2007
-"      Version: 1.2.5
+" Release Date: Monday, October 13, 2007
+"      Version: 1.2.6
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -126,7 +126,13 @@ if !has("ruby")
     echo "FreeBSD:"
     echo "    # pkg_add -r vim+ruby\n"
 
-    echo "Manually:"
+    echo "Windows:"
+    echo "    1. Download and install Ruby from here:"
+    echo "       http://www.ruby-lang.org/"
+    echo "    2. Install a Vim binary with Ruby support:"
+    echo "       http://hasno.info/2007/5/18/windows-vim-7-1-2\n"
+
+    echo "Manually (including Cygwin):"
     echo "    1. Install Ruby."
     echo "    2. Download the Vim source package (say, vim-7.0.tar.bz2)"
     echo "    3. Build and install:"
@@ -199,6 +205,18 @@ class String
   def ends_with?(s)
     tail = self[-s.length, s.length]
     tail == s
+  end
+end
+
+class Vim::Buffer
+  # On Windows, name() returns paths with backslashes instead of the Ruby
+  # standard forward slashes, so we need to fix that for portability.
+  def name_p
+    if name.nil?
+      nil
+    else
+      name.gsub('\\', '/')
+    end
   end
 end
 
@@ -368,7 +386,7 @@ class BufferExplorer < LustyExplorer
     def run
       unless @running
           @curbuf_path = $curbuf.name.nil? ? Pathname.pwd \
-                                           : Pathname.new($curbuf.name)
+                                           : Pathname.new($curbuf.name_p)
           super
       end
     end
@@ -404,7 +422,7 @@ class BufferExplorer < LustyExplorer
       (0..VIM::Buffer.count-1).each do |i|
         next if VIM::Buffer[i].name.nil?
 
-        path = Pathname.new VIM::Buffer[i].name
+        path = Pathname.new VIM::Buffer[i].name_p
         relative = path.relative_path_from(pwd).to_s
 
         @buffers[relative] = VIM::Buffer[i].number
@@ -510,7 +528,7 @@ class FilesystemExplorer < LustyExplorer
       unless $curbuf.name.nil?
         # Cache the current directory.
         @pwd = Dir.pwd
-        exe "cd #{vim_file_escape(File.dirname($curbuf.name))}"
+        exe "cd #{vim_file_escape(File.dirname($curbuf.name_p))}"
       end
 
       run()
@@ -570,8 +588,8 @@ class FilesystemExplorer < LustyExplorer
         (0..VIM::Buffer.count-1).each do |i|
           next if VIM::Buffer[i].name.nil?
 
-          dir = File.dirname VIM::Buffer[i].name
-          base = File.basename VIM::Buffer[i].name
+          dir = File.dirname VIM::Buffer[i].name_p
+          base = File.basename VIM::Buffer[i].name_p
 
           if dir == view_dir
             exe "syn match LustyExpOpenedFile \"#{entry_match_string(base)}\""
@@ -688,6 +706,9 @@ class FilesystemExplorer < LustyExplorer
         else
           @prompt.dirname + File::SEPARATOR + name
         end
+
+      # Remove duplicate separators (for Windows).
+      path.gsub!(/\/\/+/, "/")
 
       if File.directory?(path)
         # Recurse into the directory instead of opening it.
@@ -1148,7 +1169,8 @@ class Displayer
       # Only wipe the buffer if we're *sure* it's the explorer.
       if Window.select @window and \
          $curbuf == @buffer and \
-         $curbuf.name =~ /#{Regexp.escape(@title)}$/
+         (!$curbuf.name.nil?) and \
+         $curbuf.name_p =~ /#{Regexp.escape(@title)}$/
           exe "bwipeout!"
           @window = nil
           @buffer = nil
