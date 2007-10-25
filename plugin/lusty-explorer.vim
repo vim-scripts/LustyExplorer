@@ -13,8 +13,8 @@
 " Contributors: Raimon Grau, Sergey Popov, Yuichi Tateno, Bernhard Walle,
 "               Rajendra Badapanda
 "
-" Release Date: Monday, October 13, 2007
-"      Version: 1.2.6
+" Release Date: Monday, October 25, 2007
+"      Version: 1.3.0
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -62,6 +62,7 @@
 "                   directory name and a slash, e.g. "stuff/" or "../"
 "                 - Hidden files are shown by typing the first letter of their
 "                   names (which is ".").
+"                 - Variable expansion, e.g. "$D" -> "/long/dir/path/"
 "                 - Tilde (~) expansion, e.g. "~/" -> "/home/steve/"
 "                 - <Shift-Enter> will load all files appearing in the current
 "                   list (in gvim only).
@@ -100,6 +101,8 @@
 "   - also add a lock key which will make the stuff that currently appears
 "     listed the basis for the next match attempt.
 "   - (also unlock key)
+" - if too many listings to fit in window, have the last one be something
+"   like "<Too many listings to show fully>".
 
 " Exit quickly when already loaded.
 if exists("g:loaded_lustyexplorer")
@@ -110,6 +113,8 @@ endif
 if !has("ruby")
   if !exists("g:LustyExplorerSuppressRubyWarning") ||
      \ g:LustyExplorerSuppressRubyWarning == "0"
+  if !exists("g:LustyJugglerSuppressRubyWarning") ||
+      \ g:LustyJugglerSuppressRubyWarning == "0" 
     echohl ErrorMsg
     echon "Sorry, LustyExplorer requires ruby.  "
     echon "Here are some tips for adding it:\n"
@@ -140,6 +145,7 @@ if !has("ruby")
     echo "         # ./configure --enable-rubyinterp"
     echo "         # make && make install"
     echohl none
+  endif
   endif
   finish
 endif
@@ -232,7 +238,7 @@ class LustyExplorer
     def run
       return if @running
 
-      @prompt.clear
+      @prompt.clear!
       @settings.save
       @running = true
       @calling_window = $curwin
@@ -247,9 +253,9 @@ class LustyExplorer
       case i
         when 32..126          # Printable characters
           c = i.chr
-          @prompt.add c
+          @prompt.add! c
         when 8                # Backspace/Del/C-h
-          @prompt.backspace
+          @prompt.backspace!
         when 9                # Tab
           tab_complete()
           return if choose_if_1_remaining()
@@ -491,7 +497,7 @@ class BufferExplorer < LustyExplorer
         end
       end
 
-      @prompt.set(string)
+      @prompt.set!(string)
     end
 
     def find_complete_match(entries)
@@ -673,7 +679,7 @@ class FilesystemExplorer < LustyExplorer
         end
       end
 
-      @prompt.add(completion) unless completion.length == 0
+      @prompt.add!(completion) unless completion.length == 0
     end
 
     def completion_start
@@ -713,7 +719,8 @@ class FilesystemExplorer < LustyExplorer
       if File.directory?(path)
         # Recurse into the directory instead of opening it.
         tab_complete()
-        @prompt.add(File::SEPARATOR) unless @prompt.ends_with?(File::SEPARATOR)
+        @prompt.add!(File::SEPARATOR) \
+          unless @prompt.ends_with?(File::SEPARATOR)
         refresh()
       elsif name.include?(File::SEPARATOR)
         # Don't open a fake file/buffer with "/" in its name.
@@ -739,10 +746,10 @@ class Prompt
 
   public
     def initialize
-      clear()
+      clear!
     end
 
-    def clear
+    def clear!
       @input = ""
     end
 
@@ -750,7 +757,7 @@ class Prompt
       pretty_msg("Comment", @@PROMPT, "None", @input, "Underlined", " ")
     end
 
-    def set(s)
+    def set!(s)
       @input = s
     end
 
@@ -766,11 +773,11 @@ class Prompt
       @input.ends_with? c
     end
 
-    def add(s)
+    def add!(s)
       @input += s
     end
 
-    def backspace
+    def backspace!
       @input.chop!
     end
 
@@ -789,23 +796,44 @@ end
 
 class FilesystemPrompt < Prompt
 
+  def initialize
+    @memoized = nil
+    @dirty = true
+  end
+
+  def clear!
+    @dirty = true
+    super
+  end
+
+  def set!
+    @dirty = true
+    super
+  end
+
+  def backspace!
+    @dirty = true
+    super
+  end
+
   def at_dir?
     # We have not typed anything yet or have just typed the final '/' on a
     # directory name in pwd.  This check is interspersed throughout
     # FilesystemExplorer because of the conventions of basename and dirname.
-    @input.empty? or \
-    (File.directory?(input()) and @input.ends_with?(File::SEPARATOR))
+    input().empty? or \
+    (File.directory?(input()) and input().ends_with?(File::SEPARATOR))
   end
 
   def insensitive?
     at_dir? or (basename() == basename().downcase)
   end
 
-  def add(s)
-    # Assumption: add() will only receive enough chars at a time to complete
+  def add!(s)
+    # Assumption: add!() will only receive enough chars at a time to complete
     # a single directory level, e.g. foo/, not foo/bar/
 
     @input += s
+    @dirty = true
 
     if @input.ends_with?(File::SEPARATOR)
       # Convert the named directory to a case-sensitive version.
@@ -833,15 +861,20 @@ class FilesystemPrompt < Prompt
   end
 
   def input
-    home_expansion()
+    if @dirty
+      @memoized = variable_expansion(tilde_expansion(@input))
+      @dirty = false
+    end
+
+    @memoized
   end
 
   def basename
-    File.basename home_expansion()
+    File.basename input()
   end
 
   def dirname
-    File.dirname home_expansion()
+    File.dirname input()
   end
 
   def vim_match_string
@@ -862,22 +895,40 @@ class FilesystemPrompt < Prompt
   end
 
   private
-    def home_expansion
+    def tilde_expansion (input_str)
       # File.expand_path() gives loud errors if the path is not valid, so we
-      # do this manually.
-      if @input[0,1] == "~"
-        if @input.length == 1
+      # do this expansion manually.
+
+      if input_str[0,1] == "~"
+        if input_str.length == 1
           return ENV['HOME']
-        elsif @input[1,1] == File::SEPARATOR
-          return @input.sub('~', ENV['HOME'])
+        elsif input_str[1,1] == File::SEPARATOR
+          return input_str.sub('~', ENV['HOME'])
         end
       end
 
-      return @input
+      return input_str
+    end
+
+    def variable_expansion (input_str)
+      strings = input_str.split('$', -1)
+      return "" if strings.nil? or strings.length == 0
+
+      first = strings.shift
+
+      # Try to expand each instance of $<word>.
+      strings.inject(first) { |str, s|
+        if s =~ /^(\w+)/ and ENV[$1]
+          str + s.sub($1, ENV[$1])
+        else
+          str + "$" + s
+        end
+      }
     end
 end
 
 # Maintain MRU ordering.
+# Also used in LustyJuggler (with modification).
 class BufferStack
   public
     def initialize
@@ -1169,7 +1220,7 @@ class Displayer
       # Only wipe the buffer if we're *sure* it's the explorer.
       if Window.select @window and \
          $curbuf == @buffer and \
-         (!$curbuf.name.nil?) and \
+         $curbuf.name and \
          $curbuf.name_p =~ /#{Regexp.escape(@title)}$/
           exe "bwipeout!"
           @window = nil
