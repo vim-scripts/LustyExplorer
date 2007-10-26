@@ -13,8 +13,8 @@
 " Contributors: Raimon Grau, Sergey Popov, Yuichi Tateno, Bernhard Walle,
 "               Rajendra Badapanda
 "
-" Release Date: Monday, October 25, 2007
-"      Version: 1.3.0
+" Release Date: Monday, October 27, 2007
+"      Version: 1.3.1
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -856,6 +856,7 @@ class FilesystemPrompt < Prompt
       if (!case_correct.empty?)
         @input.sub!(/#{Regexp.escape(base)}#{File::SEPARATOR}$/, \
                     case_correct + File::SEPARATOR)
+        @dirty = true
       end
     end
   end
