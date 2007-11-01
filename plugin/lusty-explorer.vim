@@ -13,8 +13,8 @@
 " Contributors: Raimon Grau, Sergey Popov, Yuichi Tateno, Bernhard Walle,
 "               Rajendra Badapanda
 "
-" Release Date: Monday, October 27, 2007
-"      Version: 1.3.1
+" Release Date: Thursday, November 1, 2007
+"      Version: 1.4.0
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -47,29 +47,37 @@
 "               Matching is case-insensitive unless a capital letter appears
 "               in the input (similar to "smartcase" mode in Vim).
 "
-"               In the buffer explorer:
-"                 - Matching is done ANYWHERE in name.
-"                 - Entries are listed in MRU (most recently used) order.
-"                 - The currently active buffer is highlighted.
+" Buffer Explorer:
+"  - Matching is done anywhere in name.
+"  - Entries are listed in MRU (most recently used) order.
+"  - The currently active buffer is highlighted.
 "
-"               In the filesystem explorer:
-"                 - Matching is done at BEGINNING of name.
-"                 - Entries are listed in ALPHABETICAL order.
-"                 - All opened files are highlighted.
+" Filesystem Explorer:
+"  - Matching is done at beginning of name.
+"  - Entries are listed in alphabetical order.
+"  - All opened files are highlighted.
 "
-"               Extra features in the filesystem explorer:
-"                 - You can recurse into and out of directories by typing the
-"                   directory name and a slash, e.g. "stuff/" or "../"
-"                 - Hidden files are shown by typing the first letter of their
-"                   names (which is ".").
-"                 - Variable expansion, e.g. "$D" -> "/long/dir/path/"
-"                 - Tilde (~) expansion, e.g. "~/" -> "/home/steve/"
-"                 - <Shift-Enter> will load all files appearing in the current
-"                   list (in gvim only).
+"  - You can recurse into and out of directories by typing the directory name
+"    and a slash, e.g. "stuff/" or "../".
+"  - Variable expansion, e.g. "$D" -> "/long/dir/path/".
+"  - Tilde (~) expansion, e.g. "~/" -> "/home/steve/".
+"  - <Shift-Enter> will load all files appearing in the current list
+"    (in gvim only).
+"  - Hidden files are shown by typing the first letter of their names
+"    (which is ".").
 "
-"               That's pretty much the gist of it!
+"  You can prevent certain files from appearing in the directory listings with
+"  the following variable:
+"
+"    let g:LustyExplorerFileMasks = "*.o,*.fasl,CVS"
+"
+"  The above example will mask all object files, compiled lisp files, and
+"  files/directories named CVS from appearing in the filesystem explorer.
+"  Note that they can still be opened by being named explicitly.
+"
 "
 " Install Details:
+"
 " Copy this file into your $HOME/.vim/plugin directory so that it will be
 " sourced on startup automatically.
 "
@@ -91,7 +99,6 @@
 "
 "
 " TODO:
-" - add option to hide files with certain extensions.
 " - when an edited file is in nowrap mode and the explorer is called while the
 "   current window is scrolled to the right, name truncation occurs.
 " - bug: NO ENTRIES is not red when input is a space
@@ -101,8 +108,6 @@
 "   - also add a lock key which will make the stuff that currently appears
 "     listed the basis for the next match attempt.
 "   - (also unlock key)
-" - if too many listings to fit in window, have the last one be something
-"   like "<Too many listings to show fully>".
 
 " Exit quickly when already loaded.
 if exists("g:loaded_lustyexplorer")
@@ -629,6 +634,9 @@ class FilesystemExplorer < LustyExplorer
         name = file.basename.to_s
         next if name == "."   # Skip pwd
 
+        # Hide masked files.
+        next if FileMask.masked?(name)
+
         # Don't show hidden files unless the user has typed a leading "." in
         # the current view_path.
         if name[0].chr == "."
@@ -1100,6 +1108,7 @@ class Displayer
   private
     @@COLUMN_SEPARATOR = "    "
     @@NO_ENTRIES_STRING = "-- NO ENTRIES --" 
+    @@TRUNCATED_STRING = "-- TRUNCATED --" 
 
   public
     def Displayer.vim_match_string(s, case_insensitive)
@@ -1140,6 +1149,7 @@ class Displayer
       exe "setlocal nospell"
       exe "setlocal nobuflisted"
 
+      # (Update SavedSettings if adding to below.)
       set "timeoutlen=0"
       set "noinsertmode"
       set "noshowcmd"
@@ -1148,7 +1158,7 @@ class Displayer
       set "sidescroll=0"
       set "sidescrolloff=0"
 
-      #TODO -- cpoptions?
+      # TODO -- cpoptions?
 
       if has_syntax?
         exe 'syn match LustyExpSlash "/" contained'
@@ -1167,6 +1177,10 @@ class Displayer
                                          "#{@@NO_ENTRIES_STRING}" \
                                          '\s*\%$"'
 
+        exe 'syn match LustyExpTruncated "^\s*' \
+                                         "#{@@TRUNCATED_STRING}" \
+                                         '\s*$"'
+
         exe 'highlight link LustyExpDir Directory'
         exe 'highlight link LustyExpSlash Function'
         exe 'highlight link LustyExpOneEntry Type'
@@ -1175,6 +1189,7 @@ class Displayer
         exe 'highlight link LustyExpCurrentBuffer Constant'
         exe 'highlight link LustyExpOpenedFile PreProc'
         exe 'highlight link LustyExpNoEntries ErrorMsg'
+        exe 'highlight link LustyExpTruncated Visual'
       end
     end
 
@@ -1186,6 +1201,15 @@ class Displayer
         return
       end
 
+      # Perhaps truncate the results to just over the upper bound of
+      # displayable entries.  This isn't exact, but it's close enough.
+      max = lines() * (columns() / (1 + @@COLUMN_SEPARATOR.length))
+      if entries.length > max
+        entries.slice!(max, entries.length - max)
+      end
+
+      # Get a high upper bound on the number of columns to display to optimize
+      # the following algorithm a little.
       col_count = column_count_upper_bound(entries)
 
       # Figure out the actual number of columns to use (yuck)
@@ -1233,7 +1257,7 @@ class Displayer
     def print_columns(cols, widths)
       unlock_and_clear()
 
-      # Set the height to the length of the longest column.
+      # Set the height to the height of the longest column.
       $curwin.height = cols.max { |a, b| a.length <=> b.length }.length
 
       (0..$curwin.height-1).each do |i|
@@ -1252,6 +1276,15 @@ class Displayer
 
         $curwin.cursor = [i+1, 1]
         $curbuf.append(i, string)
+      end
+
+      # Check for result truncation.
+      if cols[0][$curwin.height]
+        # Show a truncation indicator.
+        $curbuf.delete($curbuf.count - 1)
+        $curwin.cursor = [$curbuf.count, 1]
+        $curbuf.append($curbuf.count - 1, \
+                       @@TRUNCATED_STRING.center($curwin.width, " "))
       end
 
       # There's a blank line at the end of the buffer because of how
@@ -1317,6 +1350,35 @@ class Displayer
     end
 end
 
+
+class FileMask
+  private
+    @@glob_masks = nil
+
+  public
+    def FileMask.init
+      create_glob_masks()
+    end
+
+    def FileMask.masked?(str)
+      @@glob_masks and @@glob_masks.each do |mask|
+        return true if File.fnmatch(mask, str)
+      end
+
+      return false
+    end
+
+  private
+    # Maybe this should be called more often for the case where the variable
+    # is set during a Vim session?
+    def FileMask.create_glob_masks
+      if eva('exists("g:LustyExplorerFileMasks")') != "0"
+        @@glob_masks = eva("g:LustyExplorerFileMasks").split(',')
+      end
+    end
+end
+
+
 def vim_single_quote_escape(s)
   # Everything in a Vim single quoted string is literal, except single quotes.
   # Single quotes are escaped by doubling them.
@@ -1349,6 +1411,14 @@ def msg(s)
   VIM.message s
 end
 
+def columns
+  eva("&columns").to_i
+end
+
+def lines
+  eva("&lines").to_i
+end
+
 def pretty_msg(*rest)
   return if rest.length == 0
   return if rest.length % 2 != 0
@@ -1369,6 +1439,7 @@ end
 
 
 Window.init
+FileMask.init
 $buffer_explorer = BufferExplorer.new
 $filesystem_explorer = FilesystemExplorer.new
 
