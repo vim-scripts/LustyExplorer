@@ -13,8 +13,8 @@
 " Contributors: Raimon Grau, Sergey Popov, Yuichi Tateno, Bernhard Walle,
 "               Rajendra Badapanda
 "
-" Release Date: Thursday, November 1, 2007
-"      Version: 1.4.0
+" Release Date: Thursday, November 4, 2007
+"      Version: 1.4.1
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -217,6 +217,11 @@ class String
     tail = self[-s.length, s.length]
     tail == s
   end
+
+  def starts_with?(s)
+    head = self[0, s.length]
+    head == s
+  end
 end
 
 class Vim::Buffer
@@ -273,7 +278,10 @@ class LustyExplorer
     end
 
     def cancel
-      cleanup() if @running
+      if @running
+        cleanup()
+        fix_b_hash()
+      end
     end
 
   private
@@ -383,6 +391,16 @@ class LustyExplorer
       @running = false
       msg ""
     end
+
+    # Set the "#" (previous) buffer to something valid.  After killing the
+    # display it's referencing a dead buffer.
+    def fix_b_hash
+      buffers = Window.buffer_stack.get
+      active = buffers[-1]
+      previous = buffers[-2]
+      exe "silent b #{previous}"
+      exe "silent b #{active}"
+    end
 end
 
 
@@ -409,9 +427,14 @@ class BufferExplorer < LustyExplorer
 
     def buffer_match_string
       pwd = Pathname.getwd
-      relative_path = @curbuf_path.relative_path_from(pwd).to_s
 
-      Displayer.vim_match_string(relative_path, @prompt.insensitive?)
+      name = if @curbuf_path.to_s.starts_with?("scp://")
+               @curbuf_path.to_s
+             else
+               @curbuf_path.relative_path_from(pwd).to_s
+             end
+
+      Displayer.vim_match_string(name, @prompt.insensitive?)
     end
 
     def on_refresh
@@ -431,12 +454,17 @@ class BufferExplorer < LustyExplorer
 
       # Generate a hash of the buffers.
       (0..VIM::Buffer.count-1).each do |i|
-        next if VIM::Buffer[i].name.nil?
+        name = VIM::Buffer[i].name
+        next if name.nil?
 
-        path = Pathname.new VIM::Buffer[i].name_p
-        relative = path.relative_path_from(pwd).to_s
+        name = if name.starts_with?("scp://")
+                 name
+               else
+                 path = Pathname.new VIM::Buffer[i].name_p
+                 path.relative_path_from(pwd).to_s
+               end
 
-        @buffers[relative] = VIM::Buffer[i].number
+        @buffers[name] = VIM::Buffer[i].number
       end
 
       return @buffers.keys
@@ -964,8 +992,16 @@ class BufferStack
     end
 
     def get
+      cull!
       @stack
     end
+
+  private
+    def cull!
+      # Remove empty buffers.
+      @stack.delete_if { |x| eva("bufexists(#{x})") == "0" }
+    end
+
 end
 
 
