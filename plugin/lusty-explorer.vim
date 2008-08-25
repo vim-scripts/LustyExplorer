@@ -11,10 +11,10 @@
 "  Description: Dynamic Filesystem and Buffer Explorer Vim Plugin
 "   Maintainer: Stephen Bach <sjbach@users.sourceforge.net>
 " Contributors: Raimon Grau, Sergey Popov, Yuichi Tateno, Bernhard Walle,
-"               Rajendra Badapanda
+"               Rajendra Badapanda, cho45
 "
-" Release Date: Thursday, November 4, 2007
-"      Version: 1.4.1
+" Release Date: Thursday, August 25, 2008
+"      Version: 1.4.2
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -224,17 +224,19 @@ class String
   end
 end
 
+
 class Vim::Buffer
   # On Windows, name() returns paths with backslashes instead of the Ruby
   # standard forward slashes, so we need to fix that for portability.
   def name_p
-    if name.nil?
-      nil
-    else
-      name.gsub('\\', '/')
-    end
+    name ? name.gsub('\\', '/') : nil
+  end
+
+  def modified?
+    eva("getbufvar(#{number()}, '&modified')") != "0"
   end
 end
+
 
 class LustyExplorer
   public
@@ -306,34 +308,34 @@ class LustyExplorer
       map_command = "noremap <silent> <buffer> "
 
       printables.each_byte do |b|
-        exe map_command + "<Char-#{b}> :call #{self.class}KeyPressed(#{b})<CR>"
+        exe "#{map_command} <Char-#{b}> :call #{self.class}KeyPressed(#{b})<CR>"
       end
 
       # Special characters
-      exe map_command + "<Tab>    :call #{self.class}KeyPressed(9)<CR>"
-      exe map_command + "<Bslash> :call #{self.class}KeyPressed(92)<CR>"
-      exe map_command + "<Space>  :call #{self.class}KeyPressed(32)<CR>"
-      exe map_command + "\026|    :call #{self.class}KeyPressed(124)<CR>"
+      exe "#{map_command} <Tab>    :call #{self.class}KeyPressed(9)<CR>"
+      exe "#{map_command} <Bslash> :call #{self.class}KeyPressed(92)<CR>"
+      exe "#{map_command} <Space>  :call #{self.class}KeyPressed(32)<CR>"
+      exe "#{map_command} \026|    :call #{self.class}KeyPressed(124)<CR>"
 
-      exe map_command + "<BS>     :call #{self.class}KeyPressed(8)<CR>"
-      exe map_command + "<Del>    :call #{self.class}KeyPressed(8)<CR>"
-      exe map_command + "<C-h>    :call #{self.class}KeyPressed(8)<CR>"
+      exe "#{map_command} <BS>     :call #{self.class}KeyPressed(8)<CR>"
+      exe "#{map_command} <Del>    :call #{self.class}KeyPressed(8)<CR>"
+      exe "#{map_command} <C-h>    :call #{self.class}KeyPressed(8)<CR>"
 
-      exe map_command + "<CR>     :call #{self.class}KeyPressed(13)<CR>"
-      exe map_command + "<S-CR>   :call #{self.class}KeyPressed(10)<CR>"
+      exe "#{map_command} <CR>     :call #{self.class}KeyPressed(13)<CR>"
+      exe "#{map_command} <S-CR>   :call #{self.class}KeyPressed(10)<CR>"
 
-      exe map_command + "<Esc>    :call #{self.class}Cancel()<CR>"
-      exe map_command + "<C-c>    :call #{self.class}Cancel()<CR>"
-      exe map_command + "<C-g>    :call #{self.class}Cancel()<CR>"
+      exe "#{map_command} <Esc>    :call #{self.class}Cancel()<CR>"
+      exe "#{map_command} <C-c>    :call #{self.class}Cancel()<CR>"
+      exe "#{map_command} <C-g>    :call #{self.class}Cancel()<CR>"
     end
 
     def on_refresh
-      if has_syntax?
-        exe "syn clear LustyExpMatch"
-        unless @prompt.vim_match_string.nil?
-          exe "syn match LustyExpMatch \"#{@prompt.vim_match_string}\" " \
-              'contains=LustyExpModified'
-        end
+      return unless has_syntax?
+
+      exe "syn clear LustyExpMatch"
+      if @prompt.vim_match_string
+        exe "syn match LustyExpMatch \"#{@prompt.vim_match_string}\" " \
+            'contains=LustyExpModified'
       end
     end
 
@@ -342,31 +344,26 @@ class LustyExplorer
       regex = @prompt.pruning_regex
 
       # Only return entries whose names match our input.
-      pruned = Array.new
-      entries.each do |x|
-        if x =~ regex
-          pruned << x
-        end
-      end
-
-      return pruned
+      return entries.select { |x| x =~ regex }
     end
 
     def choose
       entries = matching_entries()
 
-      if entries.length == 0
-        # No matches -- create a new buffer
-        name = @prompt.input()
-      elsif entries.length == 1
-        name = entries.first()
-      else
-        # There are multiple entries, but we could still match one.
-        name = find_complete_match(entries)
-      end
+      name = \
+        if entries.empty?
+          # No matches -- create a new buffer
+          @prompt.input()
+        elsif entries.length == 1
+          entries.first()
+        else
+          # There are multiple entries, but we could still match one.
+          find_complete_match(entries)
+        end
 
-      return if name.nil?
-      open_entry(name)
+      if name
+        open_entry(name)
+      end
     end
 
     def choose_if_1_remaining
@@ -414,8 +411,8 @@ class BufferExplorer < LustyExplorer
 
     def run
       unless @running
-          @curbuf_path = $curbuf.name.nil? ? Pathname.pwd \
-                                           : Pathname.new($curbuf.name_p)
+          @curbuf_path = $curbuf.name ? Pathname.new($curbuf.name_p) \
+                                      : Pathname.pwd
           super
       end
     end
@@ -501,7 +498,7 @@ class BufferExplorer < LustyExplorer
 
       paths = matching_entries()
 
-      return if paths.length <= 0 or @prompt.input.length <= 0
+      return if paths.empty? or @prompt.input.empty?
 
       string = @prompt.input
       done = false
@@ -964,6 +961,7 @@ class FilesystemPrompt < Prompt
     end
 end
 
+
 # Maintain MRU ordering.
 # Also used in LustyJuggler (with modification).
 class BufferStack
@@ -1001,7 +999,6 @@ class BufferStack
       # Remove empty buffers.
       @stack.delete_if { |x| eva("bufexists(#{x})") == "0" }
     end
-
 end
 
 
@@ -1074,6 +1071,7 @@ class SavedSettings
     @sidescroll = eva "&sidescroll"
     @sidescrolloff = eva "&sidescrolloff"
 
+    @reg_unnamed = vim_single_quote_escape(eva('@"'))
     @reg0 = vim_single_quote_escape(eva("@0"))
     @reg1 = vim_single_quote_escape(eva("@1"))
     @reg2 = vim_single_quote_escape(eva("@2"))
@@ -1117,7 +1115,10 @@ class SavedSettings
     exe "set sidescroll=#{@sidescroll}"
     exe "set sidescrolloff=#{@sidescrolloff}"
 
-    exe "let @0 = '#{@reg0}'"
+    exe "let @\" = '#{@reg_unnamed}'"
+
+    # FIXME: Setting register 0 overwrites @", so skip it for now.
+    #exe "let @0 = '#{@reg0}'"
     exe "let @1 = '#{@reg1}'"
     exe "let @2 = '#{@reg2}'"
     exe "let @3 = '#{@reg3}'"
@@ -1478,6 +1479,7 @@ Window.init
 FileMask.init
 $buffer_explorer = BufferExplorer.new
 $filesystem_explorer = FilesystemExplorer.new
+
 
 
 EOF
