@@ -15,8 +15,8 @@
 "               Rajendra Badapanda, cho45, Simo Salminen, Sami Samhuri,
 "               Matt Tolton
 "
-" Release Date: June 8, 2009
-"      Version: 2.1.0
+" Release Date: October 10, 2009
+"      Version: 2.1.1
 "               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
 "               Explorer plugin.
 "
@@ -123,6 +123,13 @@
 " Exit quickly when already loaded.
 if exists("g:loaded_lustyexplorer")
   finish
+endif
+
+if exists("g:FuzzyFinderMode.TextMate")
+  echohl WarningMsg
+  echo "Warning: LustyExplorer detects the presence of fuzzyfinder_textmate;"
+  echo "that plugin sometimes interacts poorly with other Ruby plugins."
+  echohl none
 endif
 
 " Check for Ruby functionality.
@@ -471,8 +478,8 @@ class LustyExplorer
         @ordered_matching_entries = compute_ordered_matching_entries()
       end
 
-      highlight_selected_index()
       on_refresh()
+      highlight_selected_index()
       @displayer.print @ordered_matching_entries.map { |x| x.name }
       @prompt.print
     end
@@ -895,7 +902,7 @@ class FilesystemExplorer < LustyExplorer
       assert($curwin == @calling_window)
       # Escape for Vim and remove leading ./ for files in pwd.
       escaped = VIM::filename_escape(path_str).sub(/^\.\//,"")
-      sanitized = eva "fnamemodify('#{escaped}', ':p')"
+      sanitized = eva "fnamemodify('#{escaped}', ':.')"
       cmd = case open_mode
             when :current_tab
               "e"
