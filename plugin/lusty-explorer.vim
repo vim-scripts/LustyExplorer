@@ -15,10 +15,8 @@
 "               Rajendra Badapanda, cho45, Simo Salminen, Sami Samhuri,
 "               Matt Tolton, Björn Winckler, sowill, David Brown
 "
-" Release Date: March 15, 2010
-"      Version: 2.2.0
-"               Inspired by Viewglob, Emacs, and by Jeff Lanzarotta's Buffer
-"               Explorer plugin.
+" Release Date: March 25, 2010
+"      Version: 2.2.1
 "
 "        Usage: To launch the explorers:
 "
@@ -126,6 +124,7 @@
 " - FilesystemExplorerRecursive
 " - restore MRU buffer ordering for initial BufferExplorer display?
 " - C-jhkl navigation to highlight a file?
+" - abbrev "a" will score e.g. "m-a" higher than e.g. "ad"
 
 " Exit quickly when already loaded.
 if exists("g:loaded_lustyexplorer")
@@ -268,7 +267,7 @@ end
 class File
   def self.simplify_path(s)
     begin
-      if s[0] == '~'[0]
+      if s[0] == ?~
         s = File.expand_path(s.sub(/\/.*/,'')) + \
             s.sub(/^[^\/]+/,'')
       end
@@ -359,7 +358,9 @@ class LiquidMetal
 
     scores = buildScoreArray(string, abbrev)
 
-    sum = scores.inject { |a, b| a + b }
+    # Faster than Array#inject...
+    sum = 0.0
+    scores.each { |x| sum += x }
 
     return sum / scores.length;
   end
@@ -368,29 +369,29 @@ class LiquidMetal
     scores = Array.new(string.length)
     lower = string.downcase()
 
-    lastIndex = -1
+    lastIndex = 0
     started = false
 
     abbrev.downcase().each_char do |c|
-      index = lower.index(c, lastIndex + 1)
-      return scores.fill(@@SCORE_NO_MATCH, 0..-1) if index.nil?
+      index = lower.index(c, lastIndex)
+      return scores.fill(@@SCORE_NO_MATCH) if index.nil?
       started = true if index == 0
 
-      if index > 0 and " \t/._-".include?(string[index - 1])
+      if index > 0 and " ._-".include?(string[index - 1])
         scores[index - 1] = @@SCORE_MATCH
-        scores.fill(@@SCORE_BUFFER, (lastIndex + 1)...(index - 1))
-      elsif string[index] >= "A"[0] and string[index] <= "Z"[0]
-        scores.fill(@@SCORE_BUFFER, (lastIndex + 1)...index)
+        scores.fill(@@SCORE_BUFFER, lastIndex...(index - 1))
+      elsif string[index] >= ?A and string[index] <= ?Z
+        scores.fill(@@SCORE_BUFFER, lastIndex...index)
       else
-        scores.fill(@@SCORE_NO_MATCH, (lastIndex + 1)...index)
+        scores.fill(@@SCORE_NO_MATCH, lastIndex...index)
       end
 
       scores[index] = @@SCORE_MATCH
-      lastIndex = index
+      lastIndex = index + 1
     end
 
     trailing_score = started ? @@SCORE_TRAILING_BUT_STARTED : @@SCORE_TRAILING
-    scores.fill(trailing_score, lastIndex + 1)
+    scores.fill(trailing_score, lastIndex)
     return scores
   end
 end
@@ -428,10 +429,6 @@ class LustyExplorer
 
     def run
       return if @running
-
-      if $PROFILING
-        RubyProf.measure_mode = RubyProf::WALL_TIME
-      end
 
       @settings.save
       @running = true
@@ -595,8 +592,9 @@ class LustyExplorer
     end
 
     def matching_entries
+      abbrev = current_abbreviation()
       all_entries().select { |x|
-        x.current_score = LiquidMetal.score(x.name, current_abbreviation())
+        x.current_score = LiquidMetal.score(x.name, abbrev)
         x.current_score != 0.0
       }
     end
@@ -719,10 +717,10 @@ class BufferExplorer < LustyExplorer
                      end
 
         # Disabled: show buffer number next to name
-        #short_name += ' ' + buffer.number.to_s
+        #short_name << ' ' + buffer.number.to_s
 
         # Show modification indicator
-        short_name += entry.vim_buffer.modified? ? " [+]" : ""
+        short_name << entry.vim_buffer.modified? ? " [+]" : ""
 
         entry.name = short_name
       end
@@ -888,17 +886,16 @@ class FilesystemExplorer < LustyExplorer
       unless @memoized_entries.has_key?(view)
         # Generate an array of the files
         entries = []
-        view.each_entry do |file|
-          name = file.basename.to_s
+        view_str = view.to_s + File::SEPARATOR
+        Dir.foreach(view_str) do |name|
           next if name == "."   # Skip pwd
           next if name == ".." and lusty_option_set?("AlwaysShowDotFiles")
 
           # Hide masked files.
           next if FileMasks.masked?(name)
 
-          if (view + file).directory?
-            # ^^ bug in Pathname.each_entry -- block variable has no dir.
-            name += File::SEPARATOR
+          if FileTest.directory?(view_str + name)
+            name << File::SEPARATOR
           end
           entries << Entry.new(name)
         end
@@ -908,12 +905,12 @@ class FilesystemExplorer < LustyExplorer
       all = @memoized_entries[view]
 
       if lusty_option_set?("AlwaysShowDotFiles") or \
-         current_abbreviation()[0] == '.'[0]
+         current_abbreviation()[0] == ?.
         all
       else
         # Filter out dotfiles if the current abbreviation doesn't start with
         # '.'.
-        all.select { |x| x.name[0] != '.'[0] }
+        all.select { |x| x.name[0] != ?. }
       end
     end
 
@@ -989,7 +986,7 @@ class Prompt
     end
 
     def add!(s)
-      @input += s
+      @input << s
     end
 
     def backspace!
@@ -998,7 +995,7 @@ class Prompt
 
     def up_one_dir!
       @input.chop!
-      while !@input.empty? and @input[-1] != '/'[0]
+      while !@input.empty? and @input[-1] != ?/
         @input.chop!
       end
     end
@@ -1013,32 +1010,32 @@ class FilesystemPrompt < Prompt
   end
 
   def clear!
-    @dirty = true
     super
+    @dirty = true
   end
 
   def set!(s)
-    @dirty = true
     # On Windows, Vim will return paths with a '\' separator, but
     # we want to use '/'.
     super(s.gsub('\\', '/'))
+    @dirty = true
   end
 
   def backspace!
-    @dirty = true
     super
+    @dirty = true
   end
 
   def up_one_dir!
-    @dirty = true
     super
+    @dirty = true
   end
 
   def at_dir?
     # We have not typed anything yet or have just typed the final '/' on a
     # directory name in pwd.  This check is interspersed throughout
     # FilesystemExplorer because of the conventions of basename and dirname.
-    input().empty? or input().ends_with?(File::SEPARATOR)
+    input().empty? or input()[-1] == File::SEPARATOR[0]
     # Don't think the File.directory? call is necessary, but leaving this
     # here as a reminder.
     #(File.directory?(input()) and input().ends_with?(File::SEPARATOR))
@@ -1052,7 +1049,7 @@ class FilesystemPrompt < Prompt
     # Assumption: add!() will only receive enough chars at a time to complete
     # a single directory level, e.g. foo/, not foo/bar/
 
-    @input += s
+    @input << s
     @dirty = true
   end
 
@@ -1182,7 +1179,7 @@ class Displayer
             '\zs' + VIM::regex_escape(s) + '\%( \[+\]\)\?' + '\ze' \
             '\%(\s*$\|' + @@COLUMN_SEPARATOR + '\)'
 
-      str += '\c' if case_insensitive
+      str << '\c' if case_insensitive
 
       return str
     end
@@ -1322,14 +1319,14 @@ class Displayer
         string = ""
         (0..cols.length-1).each do |j|
           break if cols[j][i].nil?
-          string += cols[j][i]
-          string += " " * [(widths[j] - cols[j][i].length), 0].max
-          string += @@COLUMN_SEPARATOR
+          string << cols[j][i]
+          string << " " * [(widths[j] - cols[j][i].length), 0].max
+          string << @@COLUMN_SEPARATOR
         end
 
         # Stretch the line to the length of the window with whitespace so that
         # we can "hide" the cursor in the corner.
-        string += " " * [($curwin.width - string.length), 0].max
+        string << " " * [($curwin.width - string.length), 0].max
 
         $curwin.cursor = [i+1, 1]
         $curbuf.append(i, string)
@@ -1497,7 +1494,14 @@ def profile
   # Profile (if enabled) and provide better
   # backtraces when there's an error.
 
-  RubyProf.resume if $PROFILING
+  if $PROFILING
+    if not RubyProf.running?
+      RubyProf.measure_mode = RubyProf::WALL_TIME
+      RubyProf.start
+    else
+      RubyProf.resume
+    end
+  end
 
   begin
     yield
@@ -1506,7 +1510,9 @@ def profile
     puts e.backtrace
   end
 
-  RubyProf.pause if $PROFILING
+  if $PROFILING and RubyProf.running?
+    RubyProf.pause
+  end
 end
 
 class AssertionError < StandardError ; end
