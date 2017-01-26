@@ -354,10 +354,11 @@ module VIM
   def self.zero?(var)
     # In Vim 7.2 and older, VIM::evaluate returns Strings for boolean
     # expressions; in later versions, Fixnums.
+    # In ruby 2.4+ Fixnum is deprecated, change to Integer
     case var
     when String
       var == "0"
-    when Fixnum
+    when Integer
       var == 0
     else
       LustyE::assert(false, "unexpected type: #{var.class}")
